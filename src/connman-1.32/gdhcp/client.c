@@ -192,7 +192,7 @@ static void init_packet(GDHCPClient* dhcp_client, gpointer pkt, char type)
 }
 
 static void add_request_options(GDHCPClient* dhcp_client,
-                                struct dhcp_packet* packet)
+                                struct dhcp_packet* packet)//добавляет опции, которую мы хотим попросить у сервера в пакет
 {
     int len = 0;
     GList* list;
@@ -203,13 +203,13 @@ static void add_request_options(GDHCPClient* dhcp_client,
     {
         code = (uint8_t)GPOINTER_TO_INT(list->data);
 
-        packet->options[end + OPT_DATA + len] = code;
+        packet->options[end + OPT_DATA + len] = code;//заполняем содержимое
         len++;
     }
 
     if (len)
     {
-        packet->options[end + OPT_CODE] = DHCP_PARAM_REQ;
+        packet->options[end + OPT_CODE] = DHCP_PARAM_REQ;//заполняем заголовок
         packet->options[end + OPT_LEN] = len;
         packet->options[end + OPT_DATA + len] = DHCP_END;
     }
@@ -224,7 +224,7 @@ struct hash_params
 
 static void add_dhcpv6_binary_option(gpointer key, gpointer value,
                                      gpointer user_data)
-{
+{//записали опцию в dhcpv6 пакет
     uint8_t* option = value;
     uint16_t len;
     struct hash_params* params = user_data;
@@ -253,7 +253,7 @@ static void add_dhcpv6_send_options(GDHCPClient* dhcp_client,
         return;
 
     g_hash_table_foreach(dhcp_client->send_value_hash,
-                         add_dhcpv6_binary_option, &params);
+                         add_dhcpv6_binary_option, &params);//цикл for each по каждому параметру hash таблицы
 
     *ptr_buf = *params.ptr_buf;
 }
@@ -270,7 +270,7 @@ static void copy_option(uint8_t* buf, uint16_t code, uint16_t len,
 }
 
 static int32_t get_time_diff(struct timeval* tv)
-{
+{//считает разницу между текущим временем и tv
     struct timeval now;
     int32_t hsec;
 
@@ -285,7 +285,7 @@ static int32_t get_time_diff(struct timeval* tv)
 static void remove_timeouts(GDHCPClient* dhcp_client)
 {
     if (dhcp_client->timeout > 0)
-        g_source_remove(dhcp_client->timeout);
+        g_source_remove(dhcp_client->timeout);//удаляем источник с заданным идентификатором из основного контекста
     if (dhcp_client->t1_timeout > 0)
         g_source_remove(dhcp_client->t1_timeout);
     if (dhcp_client->t2_timeout > 0)
@@ -335,11 +335,11 @@ static void add_dhcpv6_request_options(GDHCPClient* dhcp_client,
             copy_option(*ptr_buf, G_DHCPV6_CLIENTID,
                         dhcp_client->duid_len, dhcp_client->duid);
             (*ptr_buf) += len;
-            added = true;
+            added = true;//мы добавили код
             break;
 
         case G_DHCPV6_SERVERID:
-            if (!dhcp_client->server_duid)
+            if (!dhcp_client->server_duid)//если мы не знаем сервер ещё
                 break;
 
             len = 2 + 2 + dhcp_client->server_duid_len;
@@ -383,7 +383,7 @@ static void add_dhcpv6_request_options(GDHCPClient* dhcp_client,
                 diff = 0;
             }
             else
-            {
+            {//считаем время между первым пакетом и настоящим моментом
                 diff = get_time_diff(&dhcp_client->start_time);
                 if (diff < 0 || diff > 0xffff)
                     diff = 0xffff;
@@ -422,7 +422,7 @@ static void add_dhcpv6_request_options(GDHCPClient* dhcp_client,
     }
 }
 
-static void add_binary_option(gpointer key, gpointer value, gpointer user_data)
+static void add_binary_option(gpointer key, gpointer value, gpointer user_data)//обёртка над dhcp_add_binary_option (добавляет опцию в пакет)
 {
     uint8_t* option = value;
     struct dhcp_packet* packet = user_data;
@@ -432,7 +432,7 @@ static void add_binary_option(gpointer key, gpointer value, gpointer user_data)
 
 static void add_send_options(GDHCPClient* dhcp_client,
                              struct dhcp_packet* packet)
-{
+{//каждую нашу опцию добавляем в dhcp пакет, чтобы отправить серверу
     g_hash_table_foreach(dhcp_client->send_value_hash,
                          add_binary_option, packet);
 }
@@ -444,7 +444,7 @@ static void add_send_options(GDHCPClient* dhcp_client,
  * "authoritative" reply before responding.
  */
 static uint16_t dhcp_attempt_secs(GDHCPClient* dhcp_client)
-{
+{// добавляет в пакет поле secs - сколько полных секунд прошло с тог, как начались попытки получить ip
     return htons(MIN(time(NULL) - dhcp_client->start, UINT16_MAX));
 }
 
@@ -454,7 +454,7 @@ static int send_discover(GDHCPClient* dhcp_client, uint32_t requested)
 
     debug(dhcp_client, "sending DHCP discover request");
 
-    init_packet(dhcp_client, &packet, DHCPDISCOVER);
+    init_packet(dhcp_client, &packet, DHCPDISCOVER);//инициализируем заголовок
 
     packet.xid = dhcp_client->xid;
     packet.secs = dhcp_attempt_secs(dhcp_client);
@@ -481,11 +481,11 @@ static int send_discover(GDHCPClient* dhcp_client, uint32_t requested)
     return dhcp_send_raw_packet(&packet, INADDR_ANY, CLIENT_PORT,
                                 INADDR_BROADCAST, SERVER_PORT,
                                 MAC_BCAST_ADDR, dhcp_client->ifindex,
-                                dhcp_client->retry_times % 2);
+                                dhcp_client->retry_times % 2);//отправляем с порта коиента на broadcast на порт сервера пакет discover
 }
 
 static int send_request(GDHCPClient* dhcp_client)
-{
+{//
     struct dhcp_packet packet;
 
     debug(dhcp_client, "sending DHCP request (state %d)",
@@ -511,7 +511,7 @@ static int send_request(GDHCPClient* dhcp_client)
     add_send_options(dhcp_client, &packet);
 
     if (dhcp_client->state == RENEWING || dhcp_client->state == REBINDING)
-        packet.ciaddr = htonl(dhcp_client->requested_ip);
+        packet.ciaddr = htonl(dhcp_client->requested_ip);//записываем в пакет ip клиента, который мы уже используем
 
     if (dhcp_client->state == RENEWING)
         return dhcp_send_kernel_packet(&packet,
@@ -526,7 +526,7 @@ static int send_request(GDHCPClient* dhcp_client)
 
 static int send_release(GDHCPClient* dhcp_client,
                         uint32_t server, uint32_t ciaddr)
-{
+{// отправляем пакет завершающий аренду
     struct dhcp_packet packet;
     uint64_t rand;
 
@@ -548,7 +548,7 @@ static int switch_listening_mode(GDHCPClient* dhcp_client,
                                  ListenMode listen_mode);
 
 static gboolean send_probe_packet(gpointer dhcp_data)
-{
+{//сами генерируем себе ip из пула 169.254.......
     GDHCPClient* dhcp_client;
     guint timeout;
 
@@ -583,7 +583,7 @@ static gboolean send_probe_packet(gpointer dhcp_data)
                                               timeout,
                                               ipv4ll_probe_timeout,
                                               dhcp_client,
-                                              NULL);
+                                              NULL);//вешаем таймер на ожидания ответа на arp от других устройств
     return FALSE;
 }
 
@@ -601,12 +601,12 @@ static gboolean send_announce_packet(gpointer dhcp_data)
     ipv4ll_send_arp_packet(dhcp_client->mac_address,
                            dhcp_client->requested_ip,
                            dhcp_client->requested_ip,
-                           dhcp_client->ifindex);
+                           dhcp_client->ifindex);//рассылаем широковещательно, что мы занять requested_ip
 
-    remove_timeouts(dhcp_client);
+    remove_timeouts(dhcp_client);//больше ответов не ждём
 
     if (dhcp_client->state == IPV4LL_DEFEND)
-    {
+    {//если мы пытаемся занять используемый адрес
         dhcp_client->timeout =
             g_timeout_add_seconds_full(G_PRIORITY_HIGH,
                                        DEFEND_INTERVAL,
@@ -621,12 +621,12 @@ static gboolean send_announce_packet(gpointer dhcp_data)
                                        ANNOUNCE_INTERVAL,
                                        ipv4ll_announce_timeout,
                                        dhcp_client,
-                                       NULL);
+                                       NULL);//задаём таймер, чтобы выждать, что все узлы сети получили информацию
     return TRUE;
 }
 
 static void get_interface_mac_address(int index, uint8_t* mac_address)
-{
+{//функция получения mac адреса от сетевой карты
     struct ifreq ifr;
     int sk, err;
 
@@ -661,7 +661,7 @@ done:
 }
 
 void g_dhcpv6_client_set_retransmit(GDHCPClient* dhcp_client)
-{
+{//ставим флаг, что нужно повторно отправить пакет 
     if (!dhcp_client)
         return;
 
@@ -669,7 +669,7 @@ void g_dhcpv6_client_set_retransmit(GDHCPClient* dhcp_client)
 }
 
 void g_dhcpv6_client_clear_retransmit(GDHCPClient* dhcp_client)
-{
+{//не ставим флаг, что нужно повторно отправить пакет 
     if (!dhcp_client)
         return;
 
@@ -678,7 +678,7 @@ void g_dhcpv6_client_clear_retransmit(GDHCPClient* dhcp_client)
 
 int g_dhcpv6_create_duid(GDHCPDuidType duid_type, int index, int type,
                          unsigned char** duid, int* duid_len)
-{
+{//создаём duid
     time_t duid_time;
 
     switch (duid_type)
@@ -720,7 +720,7 @@ int g_dhcpv6_create_duid(GDHCPDuidType duid_type, int index, int type,
 }
 
 static gchar* convert_to_hex(unsigned char* buf, int len)
-{
+{//переводим байты в 16ричный формат
     gchar* ret = g_try_malloc(len * 2 + 1);
     int i;
 
@@ -732,7 +732,7 @@ static gchar* convert_to_hex(unsigned char* buf, int len)
 
 int g_dhcpv6_client_set_duid(GDHCPClient* dhcp_client, unsigned char* duid,
                              int duid_len)
-{
+{//устанавливаем клиенту duid
     if (!dhcp_client || dhcp_client->type != G_DHCP_IPV6)
         return -EINVAL;
 
@@ -753,7 +753,7 @@ int g_dhcpv6_client_set_duid(GDHCPClient* dhcp_client, unsigned char* duid,
 
 int g_dhcpv6_client_set_pd(GDHCPClient* dhcp_client, uint32_t* T1,
                            uint32_t* T2, GSList* prefixes)
-{
+{//занимается добавлением префиксов не в пакет, а в таблицу send_value_hash и список request_list
     uint8_t options[1452];
     unsigned int max_buf = sizeof(options);
     int len, count = g_slist_length(prefixes);
@@ -761,7 +761,7 @@ int g_dhcpv6_client_set_pd(GDHCPClient* dhcp_client, uint32_t* T1,
     if (!dhcp_client || dhcp_client->type != G_DHCP_IPV6)
         return -EINVAL;
 
-    g_dhcp_client_set_request(dhcp_client, G_DHCPV6_IA_PD);
+    g_dhcp_client_set_request(dhcp_client, G_DHCPV6_IA_PD);//добавляем код в запрашиваемых у сервера
 
     memset(options, 0, sizeof(options));
 
@@ -815,7 +815,7 @@ int g_dhcpv6_client_set_pd(GDHCPClient* dhcp_client, uint32_t* T1,
     }
 
     g_dhcpv6_client_set_send(dhcp_client, G_DHCPV6_IA_PD,
-                             options, len);
+                             options, len);//добавляем в список своих опций options
 
     return 0;
 }
@@ -873,7 +873,7 @@ int g_dhcpv6_client_get_timeouts(GDHCPClient* dhcp_client,
 
 static uint8_t* create_iaaddr(GDHCPClient* dhcp_client, uint8_t* buf,
                               uint16_t len)
-{
+{//добавляем адрес из dhcp_client
     buf[0] = 0;
     buf[1] = G_DHCPV6_IAADDR;
     buf[2] = 0;
@@ -886,10 +886,10 @@ static uint8_t* create_iaaddr(GDHCPClient* dhcp_client, uint8_t* buf,
 
 static uint8_t* append_iaaddr(GDHCPClient* dhcp_client, uint8_t* buf,
                               const char* address)
-{
+{//добавляем конкретный адрес, который хочет использовать клиент
     struct in6_addr addr;
 
-    if (inet_pton(AF_INET6, address, &addr) != 1)
+    if (inet_pton(AF_INET6, address, &addr) != 1)//преобразует текстовый ip в двоичный формат
         return NULL;
 
     buf[0] = 0;
@@ -903,7 +903,7 @@ static uint8_t* append_iaaddr(GDHCPClient* dhcp_client, uint8_t* buf,
 }
 
 static void put_iaid(GDHCPClient* dhcp_client, int index, uint8_t* buf)
-{
+{//кладём iaid в buffer
     uint32_t iaid;
 
     iaid = g_dhcpv6_client_get_iaid(dhcp_client);
@@ -922,7 +922,7 @@ static void put_iaid(GDHCPClient* dhcp_client, int index, uint8_t* buf)
 int g_dhcpv6_client_set_ia(GDHCPClient* dhcp_client, int index,
                            int code, uint32_t* T1, uint32_t* T2,
                            bool add_iaaddr, const char* ia_na)
-{
+{// просит ia опции в зависимости от типа передачи (ia_ta - временные адреса, ia_na постоянные)
     if (code == G_DHCPV6_IA_TA)
     {
         uint8_t ia_options[4];
@@ -1100,7 +1100,7 @@ int g_dhcpv6_client_set_oro(GDHCPClient* dhcp_client, int args, ...)
 }
 
 static int send_dhcpv6_msg(GDHCPClient* dhcp_client, int type, char* msg)
-{
+{//формируем и отправляем dhcpv6 пакет
     struct dhcpv6_packet* packet;
     uint8_t buf[MAX_DHCPV6_PKT_SIZE];
     unsigned char* ptr;
@@ -1200,7 +1200,7 @@ static void remove_option_value(gpointer data)
 
 GDHCPClient* g_dhcp_client_new(GDHCPType type,
                                int ifindex, GDHCPClientError* error)
-{
+{//создаём нового клиента
     GDHCPClient* dhcp_client;
 
     if (ifindex < 0)
@@ -1270,7 +1270,7 @@ error:
 #define SERVER_AND_CLIENT_PORTS  ((67 << 16) + 68)
 
 static int dhcp_l2_socket(int ifindex)
-{
+{//создаём сокет и возвращаем его дискриптор. использует bpf фильтр - Berkeley Packet Filter
     int fd;
     struct sockaddr_ll sock;
 
@@ -1327,7 +1327,7 @@ static int dhcp_l2_socket(int ifindex)
     if (SERVER_PORT == 67 && CLIENT_PORT == 68)
         /* Use only if standard ports are in use */
         setsockopt(fd, SOL_SOCKET, SO_ATTACH_FILTER, &filter_prog,
-                   sizeof(filter_prog));
+                   sizeof(filter_prog));//загружаем bfs фильтр
 
     memset(&sock, 0, sizeof(sock));
     sock.sll_family = AF_PACKET;
@@ -1416,30 +1416,30 @@ static int dhcp_recv_l2_packet(struct dhcp_packet* dhcp_pkt, int fd,
 }
 
 static void ipv4ll_start(GDHCPClient* dhcp_client)
-{
+{//запускает процесс присваивания компьютером себе адреса без сервера dhcp
     guint timeout;
 
     remove_timeouts(dhcp_client);
 
-    switch_listening_mode(dhcp_client, L_NONE);
+    switch_listening_mode(dhcp_client, L_NONE);//переводим сокет в состояние без прослушки, так как мы сами назначаем себе адрес
     dhcp_client->retry_times = 0;
     dhcp_client->requested_ip = 0;
 
     dhcp_client->requested_ip = ipv4ll_random_ip();
 
     /*first wait a random delay to avoid storm of arp request on boot*/
-    timeout = ipv4ll_random_delay_ms(PROBE_WAIT);
+    timeout = ipv4ll_random_delay_ms(PROBE_WAIT);//Рассчитывает случайную паузу перед первым запросом
 
     dhcp_client->retry_times++;
     dhcp_client->timeout = g_timeout_add_full(G_PRIORITY_HIGH,
                                               timeout,
                                               send_probe_packet,
                                               dhcp_client,
-                                              NULL);
+                                              NULL);//Регистрирует задачу send_probe_packet в главном цикле, чтобы она выполнилась через timeout
 }
 
 static void ipv4ll_stop(GDHCPClient* dhcp_client)
-{
+{//очищает клиента после apipa
     switch_listening_mode(dhcp_client, L_NONE);
 
     remove_timeouts(dhcp_client);
@@ -1459,7 +1459,7 @@ static void ipv4ll_stop(GDHCPClient* dhcp_client)
 }
 
 static int ipv4ll_recv_arp_packet(GDHCPClient* dhcp_client)
-{
+{//Обрабатывает входящий ARP-пакет для обнаружения конфликтов IPv4LL
     int bytes;
     struct ether_arp arp;
     uint32_t ip_requested;
@@ -1477,12 +1477,12 @@ static int ipv4ll_recv_arp_packet(GDHCPClient* dhcp_client)
 
     ip_requested = htonl(dhcp_client->requested_ip);
     source_conflict = !memcmp(arp.arp_spa, &ip_requested,
-                              sizeof(ip_requested));
+                              sizeof(ip_requested));//Кто-то в сети уже использует наш адрес как свой "исходящий"
 
     target_conflict = !memcmp(arp.arp_tpa, &ip_requested,
-                              sizeof(ip_requested));
+                              sizeof(ip_requested));//Кто-то другой ищет обладателя нашего адреса (tpa)
 
-    if (!source_conflict && !target_conflict)
+    if (!source_conflict && !target_conflict)//если совпадений нет, но функция завершается, иначе конфликт
         return 0;
 
     dhcp_client->conflicts++;
@@ -1497,7 +1497,7 @@ static int ipv4ll_recv_arp_packet(GDHCPClient* dhcp_client)
         debug(dhcp_client, "DEFEND mode conflicts : %d",
               dhcp_client->conflicts);
         /*Try to defend with a single announce*/
-        send_announce_packet(dhcp_client);
+        send_announce_packet(dhcp_client);//шлём ещё одно объявление
         return 0;
     }
 
@@ -1507,13 +1507,13 @@ static int ipv4ll_recv_arp_packet(GDHCPClient* dhcp_client)
             return 0;
         else if (dhcp_client->ipv4ll_lost_cb)
             dhcp_client->ipv4ll_lost_cb(dhcp_client,
-                                        dhcp_client->ipv4ll_lost_data);
+                                        dhcp_client->ipv4ll_lost_data);//Если мы уже пытались защититься, но конфликты продолжаются, мы сдаемся и вызываем ipv4ll_lost_cb (сообщаем системе, что адрес потерян)
     }
 
-    ipv4ll_stop(dhcp_client);
+    ipv4ll_stop(dhcp_client);//останавливаем работу с этим адресом
 
     if (dhcp_client->conflicts < MAX_CONFLICTS)
-    {
+    {//Если лимит конфликтов не исчерпан, клиент выбирает новую паузу и пытается снова отправить PROBE
         /*restart whole state machine*/
         dhcp_client->retry_times++;
         dhcp_client->timeout =
@@ -1527,7 +1527,7 @@ static int ipv4ll_recv_arp_packet(GDHCPClient* dhcp_client)
      * to wait RATE_LIMIT_INTERVAL before retrying,
      * but we just report failure.
      */
-    else if (dhcp_client->no_lease_cb)
+    else if (dhcp_client->no_lease_cb)//иначе вызываем функцию, которая сигнализирует о неудаче
         dhcp_client->no_lease_cb(dhcp_client,
                                  dhcp_client->no_lease_data);
 
@@ -1535,7 +1535,7 @@ static int ipv4ll_recv_arp_packet(GDHCPClient* dhcp_client)
 }
 
 static bool check_package_owner(GDHCPClient* dhcp_client, gpointer pkt)
-{
+{//проверяем принадлежит ли пакет этому клиенту по xid
     printf("check_package_owner\n");
     if (dhcp_client->type == G_DHCP_IPV6)
     {
@@ -1572,7 +1572,7 @@ static bool check_package_owner(GDHCPClient* dhcp_client, gpointer pkt)
 static void start_request(GDHCPClient* dhcp_client);
 
 static gboolean request_timeout(gpointer user_data)
-{
+{//увеличиваем счётчик попыток и инициируем повторную отправку запроса, если не получаем ответа от dhcp сервера
     GDHCPClient* dhcp_client = user_data;
 
     debug(dhcp_client, "request timeout (retries %d)",
@@ -1601,7 +1601,7 @@ static int switch_listening_mode(GDHCPClient* dhcp_client,
     debug(dhcp_client, "switch listening mode (%d ==> %d)",
           dhcp_client->listen_mode, listen_mode);
 
-    if (dhcp_client->listen_mode != L_NONE)//если идёт прослушиваниеб то выключаем его
+    if (dhcp_client->listen_mode != L_NONE)//если идёт прослушивание, то выключаем его
     {
         if (dhcp_client->listener_watch > 0)
             g_source_remove(dhcp_client->listener_watch);//удаляем обработчик события из главного цикла GLIB
@@ -1657,12 +1657,12 @@ static int switch_listening_mode(GDHCPClient* dhcp_client,
 }
 
 static void start_request(GDHCPClient* dhcp_client)
-{
+{//отправка запроса на получение ip адреса
     debug(dhcp_client, "start request (retries %d)",
           dhcp_client->retry_times);
 
     if (dhcp_client->retry_times == REQUEST_RETRIES)
-    {
+    {//если кол-во попыток исчерпана вызываем функцию "аренда не получена"
         if (dhcp_client->no_lease_cb)
             dhcp_client->no_lease_cb(dhcp_client,
                                      dhcp_client->no_lease_data);
@@ -1685,7 +1685,7 @@ static void start_request(GDHCPClient* dhcp_client)
 }
 
 static uint32_t get_lease(struct dhcp_packet* packet)
-{
+{//получаем время аренды
     uint8_t* option;
     uint32_t lease_seconds;
 
@@ -1702,7 +1702,7 @@ static uint32_t get_lease(struct dhcp_packet* packet)
 }
 
 static void restart_dhcp(GDHCPClient* dhcp_client, int retry_times)
-{
+{//полностью очищаем клиента и пееводим в начальное состояние
     debug(dhcp_client, "restart DHCP (retries %d)", retry_times);
 
     remove_timeouts(dhcp_client);
@@ -1716,7 +1716,7 @@ static void restart_dhcp(GDHCPClient* dhcp_client, int retry_times)
 }
 
 static gboolean start_expire(gpointer user_data)
-{
+{//если время аренды истекло и клиент его не продлил
     GDHCPClient* dhcp_client = user_data;
 
     debug(dhcp_client, "lease expired");
@@ -1735,7 +1735,7 @@ static gboolean start_expire(gpointer user_data)
 }
 
 static gboolean continue_rebound(gpointer user_data)
-{
+{//реализуем логику когда потеряли ip после 2го таймаута, то есть ищем новый сервер
     GDHCPClient* dhcp_client = user_data;
     uint64_t rand;
 
@@ -1782,7 +1782,7 @@ static gboolean start_rebound(gpointer user_data)
 }
 
 static gboolean continue_renew(gpointer user_data)
-{
+{//продляем у сервера аренду после того, как наступило время t1
     GDHCPClient* dhcp_client = user_data;
     uint64_t rand;
 
@@ -1810,7 +1810,7 @@ static gboolean continue_renew(gpointer user_data)
 }
 
 static gboolean start_renew(gpointer user_data)
-{
+{//иницилизируем первую попытку продления ip и переводим клиента в renewing
     GDHCPClient* dhcp_client = user_data;
 
     debug(dhcp_client, "start renew");
@@ -1826,7 +1826,7 @@ static gboolean start_renew(gpointer user_data)
 }
 
 static void start_bound(GDHCPClient* dhcp_client)
-{
+{//настраиваем таймеры, а так же клиент получает ip (то есть в состоянии bound ip к нему привязан уже)
     debug(dhcp_client, "start bound");
 
     dhcp_client->state = BOUND;
@@ -1859,13 +1859,13 @@ static void start_bound(GDHCPClient* dhcp_client)
 }
 
 static gboolean restart_dhcp_timeout(gpointer user_data)
-{
+{//является обработчиком тайм-аута, который срабатывает, когда процесс получения или подтверждения адреса затянулся
     GDHCPClient* dhcp_client = user_data;
 
     debug(dhcp_client, "restart DHCP timeout");
 
     if (dhcp_client->state == REBOOTING)
-    {
+    {//если быстрая загрузка старого ip не удалась, то перезапускаемся
         g_free(dhcp_client->last_address);
         dhcp_client->last_address = NULL;
         restart_dhcp(dhcp_client, 0);
@@ -1903,7 +1903,7 @@ static int sprint_nip(char* dest, const char* pre, const uint8_t* ip)
 
 /* Create "opt_value1 option_value2 ..." string */
 static char* malloc_option_value_string(uint8_t* option, GDHCPOptionType type)
-{
+{//преобразует бинарные данные опции в строку
     unsigned upper_length;
     int len, optlen;
     char *dest, *ret;
@@ -1919,7 +1919,7 @@ static char* malloc_option_value_string(uint8_t* option, GDHCPOptionType type)
     if (!ret)
         return NULL;
 
-    while (len >= optlen)
+    while (len >= optlen)//пока длина буфера больше длины хотя бы 1 элемента
     {
         switch (type)
         {
@@ -1957,7 +1957,7 @@ static char* malloc_option_value_string(uint8_t* option, GDHCPOptionType type)
 }
 
 static GList* get_option_value_list(char* value, GDHCPOptionType type)
-{
+{//наоборот из строки делает список опций
     char* pos = value;
     GList* list = NULL;
 
@@ -1967,7 +1967,7 @@ static GList* get_option_value_list(char* value, GDHCPOptionType type)
     if (type == OPTION_STRING)
         return g_list_append(list, g_strdup(value));
 
-    while ((pos = strchr(pos, ' ')))
+    while ((pos = strchr(pos, ' ')))//идём по пробелам
     {
         *pos = '\0';
 
@@ -1976,7 +1976,7 @@ static GList* get_option_value_list(char* value, GDHCPOptionType type)
         value = ++pos;
     }
 
-    list = g_list_append(list, g_strdup(value));
+    list = g_list_append(list, g_strdup(value));//не забываем про последний элемент
 
     return list;
 }
@@ -1996,7 +1996,7 @@ static GList* add_prefix(GDHCPClient* dhcp_client, GList* list,
                          struct in6_addr* addr,
                          unsigned char prefixlen, uint32_t preferred,
                          uint32_t valid)
-{
+{//формирует префикс и кладёт его в список
     GDHCPIAPrefix* ia_prefix;
 
     ia_prefix = g_try_new(GDHCPIAPrefix, 1);
@@ -2024,7 +2024,7 @@ static GList* get_addresses(GDHCPClient* dhcp_client,
                             int code, int len,
                             unsigned char* value,
                             uint16_t* status)
-{
+{//Извлекает сетевые параметры из бинарного блока данных опции IA
     GList* list = NULL;
     struct in6_addr addr;
     uint32_t iaid, T1 = 0, T2 = 0, preferred = 0, valid = 0;
@@ -2185,7 +2185,7 @@ static GList* get_addresses(GDHCPClient* dhcp_client,
 
 static GList* get_domains(int maxlen, unsigned char* value)
 
-{
+{//Декодирует бинарные данные доменных имен в список строк
     GList* list = NULL;
     int pos = 0;
     unsigned char* c;
@@ -2217,7 +2217,7 @@ static GList* get_dhcpv6_option_value_list(GDHCPClient* dhcp_client,
                                            int code, int len,
                                            unsigned char* value,
                                            uint16_t* status)
-{
+{//в зависимости от code парсит данные
     GList* list = NULL;
     char* str;
     int i;
@@ -2271,7 +2271,7 @@ static GList* get_dhcpv6_option_value_list(GDHCPClient* dhcp_client,
 static void get_dhcpv6_request(GDHCPClient* dhcp_client,
                                struct dhcpv6_packet* packet,
                                uint16_t pkt_len, uint16_t* status)
-{
+{//функция сравнивает присланные серверов опции со своими и если что удаляет из таблицы то,что не было прислано
     GList *list, *value_list;
     uint8_t* option;
     uint16_t code;
@@ -2289,7 +2289,7 @@ static void get_dhcpv6_request(GDHCPClient* dhcp_client,
                                 GINT_TO_POINTER((int) code));
             continue;
         }
-
+        //парсим опцию в удобный список
         value_list = get_dhcpv6_option_value_list(dhcp_client, code,
                                                   option_len, option, status);
 
@@ -2306,7 +2306,7 @@ static void get_dhcpv6_request(GDHCPClient* dhcp_client,
 }
 
 static void get_request(GDHCPClient* dhcp_client, struct dhcp_packet* packet)
-{
+{//обрабатываем пакет и сравниваем свои опции с опциями которые нам прислал сервер
     GDHCPOptionType type;
     GList *list, *value_list;
     char* option_value;
@@ -2347,7 +2347,7 @@ static void get_request(GDHCPClient* dhcp_client, struct dhcp_packet* packet)
 
 static gboolean listener_event(GIOChannel* channel, GIOCondition condition,
                                gpointer user_data)
-{
+{//каждый раз, когда приходит пакет вызывается этот обработчик
     printf("[DEBUG] listener_event client.c\n");
     GDHCPClient* dhcp_client = user_data;
     struct sockaddr_in dst_addr = {0};
@@ -2772,7 +2772,7 @@ static gboolean listener_event(GIOChannel* channel, GIOCondition condition,
 }
 
 static gboolean discover_timeout(gpointer user_data)
-{
+{// перезапускаем процесс поиска сервера если timeout ответа на discover истёк
     GDHCPClient* dhcp_client = user_data;
 
     dhcp_client->retry_times++;
@@ -2788,7 +2788,7 @@ static gboolean discover_timeout(gpointer user_data)
 }
 
 static gboolean reboot_timeout(gpointer user_data)
-{
+{//срабатывает, когда клиент пытался выполнить процедуру "быстрого старта" (INIT-REBOOT), запрашивая свой старый IP-адрес напрямую через DHCP REQUEST, но не получил ответа от сервера
     GDHCPClient* dhcp_client = user_data;
     dhcp_client->retry_times = 0;
     dhcp_client->requested_ip = 0;
@@ -2804,7 +2804,7 @@ static gboolean reboot_timeout(gpointer user_data)
 }
 
 static gboolean ipv4ll_defend_timeout(gpointer dhcp_data)
-{
+{//Когда клиент обнаруживает конфликт (кто-то другой пытается занять его IP), он переходит в состояние DEFEND и отправляет защитный ARP-пакет. Чтобы не оставаться в этом «напряженном» состоянии вечно, запускается таймер. Если за время работы этого таймера новых конфликтов не возникло, данная функция возвращает клиента в спокойный режим мониторинга.
     GDHCPClient* dhcp_client = dhcp_data;
 
     debug(dhcp_client, "back to MONITOR mode");
@@ -2816,7 +2816,7 @@ static gboolean ipv4ll_defend_timeout(gpointer dhcp_data)
 }
 
 static gboolean ipv4ll_announce_timeout(gpointer dhcp_data)
-{
+{//Эта функция завершает стадию Announce (Анонсирование) протокола IPv4 Link-Local (RFC 3927). После того как клиент успешно проверил, что выбранный IP-адрес свободен (стадия Probe), он должен «застолбить» его за собой, отправив серию ARP-пакетов (обычно 2 штуки с интервалом в 2 секунды). Функция работает как счетчик: она отправляет анонсы один за другим, и как только лимит (ANNOUNCE_NUM) достигнут, она окончательно переводит клиента в режим использования этого адреса.
     GDHCPClient* dhcp_client = dhcp_data;
     uint32_t ip;
 
@@ -2845,7 +2845,7 @@ static gboolean ipv4ll_announce_timeout(gpointer dhcp_data)
 }
 
 static gboolean ipv4ll_probe_timeout(gpointer dhcp_data)
-{
+{//Когда устройство выбирает случайный адрес $169.254.x.x$, оно не может сразу начать его использовать. Согласно RFC 3927, клиент должен сначала отправить несколько ARP Probe пакетов (обычно 3), чтобы убедиться, что адрес не занят. Эта функция-таймер следит за количеством отправленных проверок: если лимит не достигнут — она отправляет следующую проверку, если достигнут и никто не ответил (конфликтов нет) — она переводит клиента в стадию анонсирования адреса.
     GDHCPClient* dhcp_client = dhcp_data;
 
     debug(dhcp_client, "IPV4LL probe timeout (retries %d)",
@@ -2873,14 +2873,14 @@ int g_dhcp_client_start(GDHCPClient* dhcp_client, const char* last_address)
     uint32_t addr;
     uint64_t rand;
 
-    remove_timeouts(dhcp_client);
+    remove_timeouts(dhcp_client);//очищаем старые таймеры
 
     if (dhcp_client->type == G_DHCP_IPV6)
     {
-        if (dhcp_client->information_req_cb)
+        if (dhcp_client->information_req_cb)//без аренды, только параметры сети
         {
             dhcp_client->state = INFORMATION_REQ;
-            re = switch_listening_mode(dhcp_client, L3);
+            re = switch_listening_mode(dhcp_client, L3);//переходим на уровень ip адресации
             if (re != 0)
             {
                 switch_listening_mode(dhcp_client, L_NONE);
@@ -2889,7 +2889,7 @@ int g_dhcp_client_start(GDHCPClient* dhcp_client, const char* last_address)
             }
             send_information_req(dhcp_client);
         }
-        else if (dhcp_client->solicitation_cb)
+        else if (dhcp_client->solicitation_cb)//поиск доступных dhcpv6 серверов
         {
             dhcp_client->state = SOLICITATION;
             re = switch_listening_mode(dhcp_client, L3);
@@ -2913,7 +2913,7 @@ int g_dhcp_client_start(GDHCPClient* dhcp_client, const char* last_address)
             }
             send_dhcpv6_request(dhcp_client);
         }
-        else if (dhcp_client->confirm_cb)
+        else if (dhcp_client->confirm_cb)//проверяем, что парамтры сети ещё верны
         {
             dhcp_client->state = CONFIRM;
             re = switch_listening_mode(dhcp_client, L3);
@@ -2949,7 +2949,7 @@ int g_dhcp_client_start(GDHCPClient* dhcp_client, const char* last_address)
             }
             send_dhcpv6_rebind(dhcp_client);
         }
-        else if (dhcp_client->release_cb)
+        else if (dhcp_client->release_cb)//информируем сервер об освобождении адресов
         {
             dhcp_client->state = RENEW;
             re = switch_listening_mode(dhcp_client, L3);
@@ -2961,7 +2961,7 @@ int g_dhcp_client_start(GDHCPClient* dhcp_client, const char* last_address)
             }
             send_dhcpv6_release(dhcp_client);
         }
-        else if (dhcp_client->decline_cb)
+        else if (dhcp_client->decline_cb)//отказ от аренды
         {
             dhcp_client->state = DECLINE;
             re = switch_listening_mode(dhcp_client, L3);
@@ -2984,18 +2984,18 @@ int g_dhcp_client_start(GDHCPClient* dhcp_client, const char* last_address)
         return 0;
     }
 
-    if (dhcp_client->retry_times == DISCOVER_RETRIES)
+    if (dhcp_client->retry_times == DISCOVER_RETRIES) // если мы пытались отправить пакет столько раз
     {
         if (dhcp_client->no_lease_cb)
             dhcp_client->no_lease_cb(dhcp_client,
-                                     dhcp_client->no_lease_data);
+                                     dhcp_client->no_lease_data); //сервер не найден
         dhcp_client->retry_times = 0;
         return 0;
     }
 
     if (dhcp_client->retry_times == 0)
-    {
-        g_free(dhcp_client->assigned_ip);
+    {//инициализация нового соединения
+        g_free(dhcp_client->assigned_ip);//очищаем строковое представление нашего ip, потому что dhcpclient может переиспользоваться
         dhcp_client->assigned_ip = NULL;
 
         dhcp_client->state = INIT_SELECTING;
@@ -3014,19 +3014,25 @@ int g_dhcp_client_start(GDHCPClient* dhcp_client, const char* last_address)
     }
     else
     {
-        addr = ntohl(inet_addr(last_address));
+        addr = ntohl(inet_addr(last_address)); //Превращаем строку IP в число и меняем порядок байт на "процессорный" для расчетов.
+        /*Проверка на ошибки и "плохие" адреса.
+      addr == 0xFFFFFFFF — это адрес 255.255.255.255 (Broadcast) или ошибка функции inet_addr.
+      (addr & LINKLOCAL_ADDR) == LINKLOCAL_ADDR — проверка, не является ли адрес "автоматическим" 
+      (169.254.x.x). Мы не хотим просить сервер выдать нам Link-Local адрес. */
         if (addr == 0xFFFFFFFF || ((addr & LINKLOCAL_ADDR) ==
             LINKLOCAL_ADDR))
         {
-            addr = 0;
+            addr = 0;//Если адрес некорректен, сбрасываем его в 0.
         }
-        else if (dhcp_client->last_address != last_address)
+        else if (dhcp_client->last_address != last_address)// Если адрес валиден, проверяем, не отличается ли он от того, что уже сохранен в клиенте. Важно: здесь сравниваются указатели (адреса строк в памяти)
         {
-            g_free(dhcp_client->last_address);
-            dhcp_client->last_address = g_strdup(last_address);
+            g_free(dhcp_client->last_address);//Очищаем старую строку с адресом, чтобы не было утечки памяти.
+            dhcp_client->last_address = g_strdup(last_address);//Дублируем (копируем) новую строку адреса в память клиента.
         }
     }
 
+    /* Проверяем: если у нас есть валидный адрес (addr != 0) 
+   и это не режим IPv4 Link-Local (самоназначение) */
     if ((addr != 0) && (dhcp_client->type != G_DHCP_IPV4LL))
     {
         debug(dhcp_client, "DHCP client start with state init_reboot");
@@ -3034,6 +3040,9 @@ int g_dhcp_client_start(GDHCPClient* dhcp_client, const char* last_address)
         dhcp_client->state = REBOOTING;
         send_request(dhcp_client);
 
+        /* Устанавливаем таймер ожидания ответа на запрос Reboot.
+       Если через REQUEST_TIMEOUT секунд сервер не ответит, 
+       сработает функция reboot_timeout */
         dhcp_client->timeout = g_timeout_add_seconds_full(
             G_PRIORITY_HIGH,
             REQUEST_TIMEOUT,
@@ -3042,8 +3051,9 @@ int g_dhcp_client_start(GDHCPClient* dhcp_client, const char* last_address)
             NULL);
         return 0;
     }
-    send_discover(dhcp_client, addr);
+    send_discover(dhcp_client, addr);//Если старого адреса нет, выполняем стандартный поиск сервера. Отправляем пакет DISCOVER (широковещательный поиск)
 
+    //Устанавливаем таймер на ожидание предложений (OFFER) от серверов.  Если за DISCOVER_TIMEOUT никто не ответит, сработает discover_timeout
     dhcp_client->timeout = g_timeout_add_seconds_full(G_PRIORITY_HIGH,
                                                       DISCOVER_TIMEOUT,
                                                       discover_timeout,
@@ -3081,7 +3091,7 @@ void g_dhcp_client_stop(GDHCPClient* dhcp_client)
 
 GList* g_dhcp_client_get_option(GDHCPClient* dhcp_client,
                                 unsigned char option_code)
-{
+{//функция возвращающая полученную опцию от сервера
     return g_hash_table_lookup(dhcp_client->code_value_hash,
                                GINT_TO_POINTER((int) option_code));
 }
@@ -3178,7 +3188,7 @@ void g_dhcp_client_register_event(GDHCPClient* dhcp_client,
     }
 }
 
-int g_dhcp_client_get_index(GDHCPClient* dhcp_client)
+int g_dhcp_client_get_index(GDHCPClient* dhcp_client)//возвращает сетевой индекс в linux
 {
     return dhcp_client->ifindex;
 }
@@ -3234,7 +3244,7 @@ char* g_dhcp_client_get_netmask(GDHCPClient* dhcp_client)
 }
 
 GDHCPClientError g_dhcp_client_set_request(GDHCPClient* dhcp_client,
-                                           unsigned int option_code)
+                                           unsigned int option_code)//мы просто добавляем в конец списка, не делаем запрос
 {
     if (!g_list_find(dhcp_client->request_list,
                      GINT_TO_POINTER((int)option_code)))
@@ -3245,7 +3255,7 @@ GDHCPClientError g_dhcp_client_set_request(GDHCPClient* dhcp_client,
     return G_DHCP_CLIENT_ERROR_NONE;
 }
 
-void g_dhcp_client_clear_requests(GDHCPClient* dhcp_client)
+void g_dhcp_client_clear_requests(GDHCPClient* dhcp_client)//очищает список запрашиваемых опций
 {
     g_list_free(dhcp_client->request_list);
     dhcp_client->request_list = NULL;
@@ -3253,7 +3263,7 @@ void g_dhcp_client_clear_requests(GDHCPClient* dhcp_client)
 
 void g_dhcp_client_clear_values(GDHCPClient* dhcp_client)
 {
-    g_hash_table_remove_all(dhcp_client->send_value_hash);
+    g_hash_table_remove_all(dhcp_client->send_value_hash);// очищаем таблицу опций, которые мы должны отправить серверу
 }
 
 static uint8_t* alloc_dhcp_option(int code, const uint8_t* data, unsigned size)
@@ -3283,7 +3293,7 @@ static uint8_t* alloc_dhcp_string_option(int code, const char* str)
 }
 
 GDHCPClientError g_dhcp_client_set_id(GDHCPClient* dhcp_client)
-{
+{//формируем идентификатор клиента
     const unsigned maclen = 6;
     const unsigned idlen = maclen + 1;
     const uint8_t option_code = G_DHCP_CLIENT_ID;
@@ -3307,7 +3317,7 @@ GDHCPClientError g_dhcp_client_set_id(GDHCPClient* dhcp_client)
 /* Now only support send hostname */
 GDHCPClientError g_dhcp_client_set_send(GDHCPClient* dhcp_client,
                                         unsigned char option_code, const char* option_value)
-{
+{//добавляет опцию hostname
     uint8_t* binary_option;
 
     if (option_code == G_DHCP_HOST_NAME && option_value)
@@ -3342,7 +3352,7 @@ static uint8_t* alloc_dhcpv6_option(uint16_t code, uint8_t* option,
     return storage;
 }
 
-gboolean g_dhcpv6_client_clear_send(GDHCPClient* dhcp_client, uint16_t code)
+gboolean g_dhcpv6_client_clear_send(GDHCPClient* dhcp_client, uint16_t code)//очищаем функцию, которую должны отправить
 {
     return g_hash_table_remove(dhcp_client->send_value_hash,
                                GINT_TO_POINTER((int)code));
@@ -3352,7 +3362,7 @@ void g_dhcpv6_client_set_send(GDHCPClient* dhcp_client,
                               uint16_t option_code,
                               uint8_t* option_value,
                               uint16_t option_len)
-{
+{//добавляем опцию в таблицу
     if (option_value)
     {
         uint8_t* binary_option;
@@ -3369,7 +3379,7 @@ void g_dhcpv6_client_set_send(GDHCPClient* dhcp_client,
     }
 }
 
-void g_dhcpv6_client_reset_request(GDHCPClient* dhcp_client)
+void g_dhcpv6_client_reset_request(GDHCPClient* dhcp_client)//сброс запроса
 {
     if (!dhcp_client || dhcp_client->type != G_DHCP_IPV6)
         return;
@@ -3377,7 +3387,7 @@ void g_dhcpv6_client_reset_request(GDHCPClient* dhcp_client)
     dhcp_client->last_request = time(NULL);
 }
 
-uint16_t g_dhcpv6_client_get_status(GDHCPClient* dhcp_client)
+uint16_t g_dhcpv6_client_get_status(GDHCPClient* dhcp_client)//возвращает код ответа сервера
 {
     if (!dhcp_client || dhcp_client->type != G_DHCP_IPV6)
         return 0;
@@ -3386,7 +3396,7 @@ uint16_t g_dhcpv6_client_get_status(GDHCPClient* dhcp_client)
 }
 
 GDHCPClient* g_dhcp_client_ref(GDHCPClient* dhcp_client)
-{
+{//увеличивает счётчик ссылок на клиента
     if (!dhcp_client)
         return NULL;
 
@@ -3396,7 +3406,7 @@ GDHCPClient* g_dhcp_client_ref(GDHCPClient* dhcp_client)
 }
 
 void g_dhcp_client_unref(GDHCPClient* dhcp_client)
-{
+{//уменьшает счётчик ссылок на клиента и если что очищает клиента полность.
     if (!dhcp_client)
         return;
 

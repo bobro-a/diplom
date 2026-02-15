@@ -168,7 +168,7 @@ uint8_t *dhcp_get_option(struct dhcp_packet *packet, int code)
 	return NULL;
 }
 
-int dhcp_end_option(uint8_t *optionptr)
+int dhcp_end_option(uint8_t *optionptr)//ищет байт dhcp_end
 {
 	int i = 0;
 
@@ -263,21 +263,21 @@ uint8_t *dhcpv6_get_sub_option(unsigned char *option, uint16_t max_len,
  * Option format: [code][len][data1][data2]..[dataLEN]
  */
 void dhcp_add_binary_option(struct dhcp_packet *packet, uint8_t *addopt)
-{
+{//добавляем опцию в dhcp пакет
 	unsigned len;
 	uint8_t *optionptr = packet->options;
 	unsigned end = dhcp_end_option(optionptr);
 
-	len = OPT_DATA + addopt[OPT_LEN];
+	len = OPT_DATA + addopt[OPT_LEN];//вычисляем общую длину новой опции
 
 	/* end position + (option code/length + addopt length) + end option */
-	if (end + len + 1 >= DHCP_OPTIONS_BUFSIZE)
+	if (end + len + 1 >= DHCP_OPTIONS_BUFSIZE)//проверяем поместиться ли в буфер опция
 		/* option did not fit into the packet */
 		return;
 
 	memcpy(optionptr + end, addopt, len);
 
-	optionptr[end + len] = DHCP_END;
+	optionptr[end + len] = DHCP_END;//согласно RFC список опций должен заканчиваться этим маркером
 }
 
 /*
@@ -321,14 +321,17 @@ static GDHCPOptionType check_option(uint8_t code, uint8_t data_len)
 
 void dhcp_add_option_uint32(struct dhcp_packet *packet, uint8_t code,
 							uint32_t data)
-{
-	uint8_t option[6];
-
+{//добавляем опцию размером 4 байта (ip адрес, срок аренды и тд)
+	uint8_t option[6];// Временный буфер: 1 байт код + 1 байт длина + 4 байта данные
+// Проверка валидности кода опции и её ожидаемого размера (4 байта)
 	if (check_option(code, sizeof(data)) == OPTION_UNKNOWN)
 		return;
 
 	option[OPT_CODE] = code;
 	option[OPT_LEN] = sizeof(data);
+	/*  Запись данных в сетевом порядке байт (Big-Endian).
+	   put_be32 преобразует 32-битное число из порядка байт процессора 
+	   в формат, где старший байт идет первым, и записывает его в массив начиная с позиции OPT_DATA. */
 	put_be32(data, option + OPT_DATA);
 
 	dhcp_add_binary_option(packet, option);
@@ -338,7 +341,7 @@ void dhcp_add_option_uint32(struct dhcp_packet *packet, uint8_t code,
 
 void dhcp_add_option_uint16(struct dhcp_packet *packet, uint8_t code,
 							uint16_t data)
-{
+{//добавляем опцию размером 2 байта 
 	uint8_t option[6];
 
 	if (check_option(code, sizeof(data)) == OPTION_UNKNOWN)
@@ -354,8 +357,8 @@ void dhcp_add_option_uint16(struct dhcp_packet *packet, uint8_t code,
 }
 
 void dhcp_add_option_uint8(struct dhcp_packet *packet, uint8_t code,
-							uint8_t data)
-{
+							uint8_t data)//формируем payload (данные) dhcp пакета
+{//добавляем опцию размером 1 байт (может быть флаг)
 	uint8_t option[6];
 
 	if (check_option(code, sizeof(data)) == OPTION_UNKNOWN)
@@ -391,7 +394,7 @@ void dhcp_init_header(struct dhcp_packet *packet, char type)
 	dhcp_add_option_uint8(packet, DHCP_MESSAGE_TYPE, type);
 }
 
-void dhcpv6_init_header(struct dhcpv6_packet *packet, uint8_t type)
+void dhcpv6_init_header(struct dhcpv6_packet *packet, uint8_t type)//заполнение заголовка dhcpv6
 {
 	int id;
 	uint64_t rand;
@@ -476,7 +479,7 @@ static const struct in6_addr in6addr_all_dhcp_relay_agents_and_servers_mc =
 	IN6ADDR_ALL_DHCP_RELAY_AGENTS_AND_SERVERS_MC_INIT;
 
 int dhcpv6_send_packet(int index, struct dhcpv6_packet *dhcp_pkt, int len)
-{
+{//отправляем по сокету  dhcpv6 пакет
 	struct msghdr m;
 	struct iovec v;
 	struct in6_pktinfo *pktinfo;
@@ -561,7 +564,7 @@ int dhcp_send_raw_packet(struct dhcp_packet *dhcp_pkt,
 			uint32_t source_ip, int source_port,
 			uint32_t dest_ip, int dest_port,
 			const uint8_t *dest_arp, int ifindex, bool bcast)
-{
+	{//отправляем пакет 
 	struct sockaddr_ll dest;
 	struct ip_udp_dhcp_packet packet;
 	int fd, n;
@@ -573,7 +576,7 @@ int dhcp_send_raw_packet(struct dhcp_packet *dhcp_pkt,
 				offsetof(struct ip_udp_dhcp_packet, udp),
 	};
 
-	fd = socket(PF_PACKET, SOCK_DGRAM | SOCK_CLOEXEC, htons(ETH_P_IP));
+	fd = socket(PF_PACKET, SOCK_DGRAM | SOCK_CLOEXEC, htons(ETH_P_IP));//инициализируем сокет, работающий с сетевым драйвером и 
 	if (fd < 0)
 		return -errno;
 
@@ -584,7 +587,7 @@ int dhcp_send_raw_packet(struct dhcp_packet *dhcp_pkt,
 	memset(&packet, 0, sizeof(packet));
 	packet.data = *dhcp_pkt;
 
-	dest.sll_family = AF_PACKET;
+	dest.sll_family = AF_PACKET;//Низкоуровневый интерфейс пакетов
 	dest.sll_protocol = htons(ETH_P_IP);
 	dest.sll_ifindex = ifindex;
 	dest.sll_halen = 6;
@@ -629,7 +632,7 @@ int dhcp_send_raw_packet(struct dhcp_packet *dhcp_pkt,
 int dhcp_send_kernel_packet(struct dhcp_packet *dhcp_pkt,
 				uint32_t source_ip, int source_port,
 				uint32_t dest_ip, int dest_port)
-{
+{//отправляем пакет с 3го уровня, в случаях, когда у нас уже есть ip адрес (release, renewing)
 	struct sockaddr_in client;
 	int fd, n, opt = 1;
 
@@ -638,7 +641,7 @@ int dhcp_send_kernel_packet(struct dhcp_packet *dhcp_pkt,
 					EXTEND_FOR_BUGGY_SERVERS,
 	};
 
-	fd = socket(PF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP);
+	fd = socket(PF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP);//на сетевом уровне формируем ( уже не сырой сокет)
 	if (fd < 0)
 		return -errno;
 
@@ -717,7 +720,7 @@ int dhcp_l3_socket(int port, const char *interface, int family)
 }
 
 char *get_interface_name(int index)
-{
+{//возвращаем имя интерфейса
 	struct ifreq ifr;
 	int sk, err;
 
