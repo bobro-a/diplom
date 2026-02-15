@@ -192,21 +192,20 @@ done:
 
 int connman_inet_ifindex(const char *name)
 {
-//	используется для получения числового индекса сетевого интерфейса (interface index, ifindex) по его строковому имени
 	struct ifreq ifr;
 	int sk, err;
 
 	if (!name)
 		return -1;
 
-	sk = socket(PF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);//создание временного сокета
+	sk = socket(PF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 	if (sk < 0)
 		return -1;
 
 	memset(&ifr, 0, sizeof(ifr));
-	strncpy(ifr.ifr_name, name, sizeof(ifr.ifr_name) - 1);//копируем в ifr name
+	strncpy(ifr.ifr_name, name, sizeof(ifr.ifr_name) - 1);
 
-	err = ioctl(sk, SIOCGIFINDEX, &ifr);//системный вызов к ядру. Ядро будет читать имя из ifr.ifr_name и записывать результат (ifindex) в поле ifr.ifr_ifindex.
+	err = ioctl(sk, SIOCGIFINDEX, &ifr);
 
 	close(sk);
 

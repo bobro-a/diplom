@@ -413,7 +413,6 @@ void dhcpv6_init_header(struct dhcpv6_packet *packet, uint8_t type)//запол�
 
 int dhcp_recv_l3_packet(struct dhcp_packet *packet, int fd)
 {
-	//просто считываем пакет (+ проверяем является ли он dhcp пакетом) и если что выдаём ошибку
 	int n;
 
 	memset(packet, 0, sizeof(*packet));

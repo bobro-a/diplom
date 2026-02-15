@@ -27,7 +27,8 @@ RUN apt update && \
     wireshark-common \
     isc-dhcp-client
 
-#RUN ./src/connman-1.32/bootstrap #попытка запуска connmanchfpe
+RUN apt-get remove -y network-manager \
+    && apt-get clean
 
 RUN echo '#!/bin/bash\n\
 dbus-daemon --system --nopidfile\n\

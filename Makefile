@@ -8,7 +8,6 @@ build:
 
 run:
 	docker run \
-	  --network host --cap-add=NET_ADMIN --cap-add=NET_RAW --cap-add=NET_BIND_SERVICE \
 	  -it \
       --name my-afl \
       -v $(shell pwd)/src:/app/src \

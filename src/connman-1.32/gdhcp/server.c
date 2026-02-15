@@ -357,7 +357,7 @@ GDHCPServer *g_dhcp_server_new(GDHCPType type,
 		return NULL;
 	}
 
-	dhcp_server = g_try_new0(GDHCPServer, 1);//выделяем память
+	dhcp_server = g_try_new0(GDHCPServer, 1);
 	if (!dhcp_server) {
 		*error = G_DHCP_SERVER_ERROR_NOMEM;
 		return NULL;
@@ -644,9 +644,8 @@ static void send_inform(GDHCPServer *dhcp_server,
 }
 
 static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
-							gpointer user_data)//функция обратного вызова (callback), которая вызывается основным циклом событий GLib всякий раз, когда на сокете DHCP-сервера происходит сетевое событие
+							gpointer user_data)
 {
-	printf("listener_event package received <- need me (server.c)\n");
 	GDHCPServer *dhcp_server = user_data;
 	struct dhcp_packet packet;
 	struct dhcp_lease *lease;
@@ -655,40 +654,40 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 	int re;
 
 	if (condition & (G_IO_NVAL | G_IO_ERR | G_IO_HUP)) {
-		dhcp_server->listener_watch = 0;//если возникла критическая ошибка, то сервер прекращает слушать сокет
+		dhcp_server->listener_watch = 0;
 		return FALSE;
 	}
 
-	re = dhcp_recv_l3_packet(&packet, dhcp_server->listener_sockfd);//принимает и парсим пакет в структуру dhcp_packet
+	re = dhcp_recv_l3_packet(&packet, dhcp_server->listener_sockfd);
 	if (re < 0)
-		return TRUE;//watch осточник должен оставаться активным и ждать следующего события
+		return TRUE;
 
-	type = check_packet_type(&packet);//определяем тип dhcp сообщения (DISCOVER, REQUEST)
+	type = check_packet_type(&packet);
 	if (type == 0)
 		return TRUE;
 
-	server_id_option = dhcp_get_option(&packet, DHCP_SERVER_ID);//если в пакете есть id_ сервера, то мы можем понять для нашего сервера
+	server_id_option = dhcp_get_option(&packet, DHCP_SERVER_ID);
 	if (server_id_option) {
 		uint32_t server_nid =
 			get_unaligned((const uint32_t *) server_id_option);
 
-		if (server_nid != dhcp_server->server_nip)//если наш ip не совпадает с ip в пакете, но это сообщение не для нас
+		if (server_nid != dhcp_server->server_nip)
 			return TRUE;
 	}
 
-	request_ip_option = dhcp_get_option(&packet, DHCP_REQUESTED_IP);//извлекаем запрашиваемый клиентом ip
+	request_ip_option = dhcp_get_option(&packet, DHCP_REQUESTED_IP);
 	if (request_ip_option)
 		requested_nip = get_be32(request_ip_option);
 
-	lease = find_lease_by_mac(dhcp_server, packet.chaddr);//ищем аренду по мак адресу клиента
+	lease = find_lease_by_mac(dhcp_server, packet.chaddr);
 
 	switch (type) {
 	case DHCPDISCOVER:
 		debug(dhcp_server, "Received DISCOVER");
-		send_offer(dhcp_server, &packet, lease, requested_nip);//если сообщение DISCOVER, то отвечаем OFFER
+
+		send_offer(dhcp_server, &packet, lease, requested_nip);
 		break;
 	case DHCPREQUEST:
-//Клиент запрашивает определенный IP-адрес (либо предложенный в DHCPOFFER, либо предыдущий).
 		debug(dhcp_server, "Received REQUEST NIP %d",
 							requested_nip);
 		if (requested_nip == 0) {
@@ -696,7 +695,7 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 			if (requested_nip == 0)
 				break;
 		}
-//			Сервер либо подтверждает аренду (send_ACK), либо отклоняет запрос (send_NAK).
+
 		if (lease && requested_nip == lease->lease_nip) {
 			debug(dhcp_server, "Sending ACK");
 			send_ACK(dhcp_server, &packet,
@@ -710,8 +709,7 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 		}
 
 		break;
-	case DHCPDECLINE://отклонение
-//		Клиент обнаружил, что предложенный IP-адрес уже используется в сети (например, ARP-конфликт)
+	case DHCPDECLINE:
 		debug(dhcp_server, "Received DECLINE");
 
 		if (!server_id_option)
@@ -722,15 +720,14 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 
 		if (!lease)
 			break;
-//			Если пакет предназначен этому серверу и адрес совпадает с арендой, сервер удаляет эту аренду (remove_lease), чтобы предотвратить дальнейшую выдачу конфликтующего адреса.
+
 		if (requested_nip == lease->lease_nip)
 			remove_lease(dhcp_server, lease);
 
 		break;
 	case DHCPRELEASE:
-//		Клиент добровольно освобождает свой IP-адрес.
 		debug(dhcp_server, "Received RELEASE");
-//			Сервер немедленно устанавливает срок действия аренды на текущее время (time(NULL)), делая адрес доступным для других клиентов.
+
 		if (!server_id_option)
 			break;
 
@@ -742,9 +739,8 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 					time(NULL));
 		break;
 	case DHCPINFORM:
-//		Клиент, уже имеющий IP-адрес (например, статически настроенный), запрашивает у сервера дополнительные параметры конфигурации (DNS, шлюз и т.д.).
 		debug(dhcp_server, "Received INFORM");
-		send_inform(dhcp_server, &packet);//Сервер отвечает пакетом DHCPACK (send_inform), содержащим только опции конфигурации, но не информацию об аренде.
+		send_inform(dhcp_server, &packet);
 		break;
 	}
 
@@ -754,18 +750,18 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 /* Caller need to load leases before call it */
 int g_dhcp_server_start(GDHCPServer *dhcp_server)
 {
-	GIOChannel *listener_channel;//инициализация канала
+	GIOChannel *listener_channel;
 	int listener_sockfd;
 
-	if (dhcp_server->started)//проверяем запущен ли уже сервер
+	if (dhcp_server->started)
 		return 0;
 
 	listener_sockfd = dhcp_l3_socket(SERVER_PORT,
-					dhcp_server->interface, AF_INET);//создаём сокет прослушивания
+					dhcp_server->interface, AF_INET);
 	if (listener_sockfd < 0)
 		return -EIO;
 
-	listener_channel = g_io_channel_unix_new(listener_sockfd);//создаём канал из сокета
+	listener_channel = g_io_channel_unix_new(listener_sockfd);
 	if (!listener_channel) {
 		close(listener_sockfd);
 		return -EIO;
@@ -774,8 +770,7 @@ int g_dhcp_server_start(GDHCPServer *dhcp_server)
 	dhcp_server->listener_sockfd = listener_sockfd;
 	dhcp_server->listener_channel = listener_channel;
 
-	g_io_channel_set_close_on_unref(listener_channel, TRUE);//Устанавливает флаг, который гарантирует, что базовый дескриптор файла/сокета (listener_sockfd) будет автоматически закрыт, когда ссылка на listener_channel станет нулевой
-	//регистрирует сокет в основном цикле событий GLib.
+	g_io_channel_set_close_on_unref(listener_channel, TRUE);
 	dhcp_server->listener_watch =
 			g_io_add_watch_full(listener_channel, G_PRIORITY_HIGH,
 				G_IO_IN | G_IO_NVAL | G_IO_ERR | G_IO_HUP,
