@@ -13,11 +13,13 @@
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 
-//#include "gdhcp.h"
+#include <linux/if_packet.h>
+#include <net/if.h>
 
-const int PORT=68;
 
-static int replay_pcap_payloads_to_67(const char *pcap_path) {
+// const int PORT=68;
+
+static int replay_pcap(const char *pcap_path) {
     char errbuf[PCAP_ERRBUF_SIZE] = {0};
     pcap_t *p = pcap_open_offline(pcap_path, errbuf);//pcap_t * — дескриптор для чтения пакетов (используется в pcap_loop, pcap_next и т.д.)
     if (!p) {
@@ -26,43 +28,33 @@ static int replay_pcap_payloads_to_67(const char *pcap_path) {
     }
 
 
-    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     if (sock < 0) {
         perror("socket");
         pcap_close(p);
         return 1;
     }
 
-    int broadcast = 1;
-    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
+    struct sockaddr_ll device = {0};
+    device.sll_ifindex = if_nametoindex("enp0s2"); 
+    device.sll_family = AF_PACKET;
 
     struct pcap_pkthdr *hdr = NULL;
     const u_char *pkt = NULL;
 
-    while (1) {
-        int rc = pcap_next_ex(p, &hdr, &pkt);//читает следующий пакет из дескриптора, hdr- указатель на указатель заголовка pcap_pkthdr, pkt- данные
-        if (rc == 0) continue;      // timeout (актуально для live, но пусть будет)
-        if (rc == -2) break;        // EOF
-        if (rc < 0) {
-            fprintf(stderr, "pcap_next_ex: %s\n", pcap_geterr(p));
-            break;
-        }
-
+    while (pcap_next_ex(p, &hdr, &pkt) == 1) {
         if (hdr->caplen > 0) {
-            printf("[DEBUG] Sending %u bytes\n", hdr->caplen);
-
-            struct sockaddr_in dst = {0};
-            dst.sin_family = AF_INET;
-            dst.sin_port = htons(PORT);
-            dst.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-
+            // 3. Отправляем пакет целиком (вместе с Ethernet заголовком)
             ssize_t n = sendto(sock, pkt, hdr->caplen, 0,
-                              (struct sockaddr *)&dst, sizeof(dst));
-            printf("[DEBUG] sendto returned: %zd\n", n);
+                              (struct sockaddr *)&device, sizeof(device));
+            
+            if (n < 0) {
+                perror("sendto raw");
+            } else {
+                printf("[DEBUG] Raw packet sent: %zd bytes\n", n);
+            }
         }
-
-        // Небольшая пауза, чтобы connmand успевал обрабатывать
-        usleep(20 * 1000);
+        usleep(10 * 1000); // Небольшая пауза между пакетами
     }
 
     close(sock);
@@ -73,7 +65,9 @@ static int replay_pcap_payloads_to_67(const char *pcap_path) {
 
 int main(int argc, char *argv[]) {
     if (argc<2){
-        perror("Недостаточно аргументов в командной строке");
+        fprintf(stderr, "Ошибка: Недостаточно аргументов в командной строке.\n");
+        fprintf(stderr, "Использование: %s <путь_к_pcap_файлу>\n", argv[0]);
+        return 1;
     }
     printf("Program start!\n");
 
@@ -87,25 +81,27 @@ int main(int argc, char *argv[]) {
         //Дочерний процесс
         printf("Binary connmand start!\n");
         setenv("LLVM_PROFILE_FILE", "cov_data/connmand_%p.profraw", 1);
+        char* bin = "/usr/local/sbin/connmand";
         char *args[] = {
-                "/usr/sbin/connmand",
-                "--debug",          // Запустить демоном
-                "--noplugin=wifi",   // Отключить WiFi плагин
+                bin,         // debug
+                "-n",//--nodaemon
+                "-d", "gdhcp/dhcp.c,gdhcp/client.c",
                 NULL
         };
-        execv("/usr/sbin/connmand", args);
+        execv(bin, args);
         perror("execv failed");
-        return 1;
+        _exit(1);
 
     } else {
         //Родительский процесс
         printf("wrapper start with pid: %d\n", pid);
-        usleep(20 * 1000);
+        sleep(2);
 
-        int r = replay_pcap_payloads_to_67(argv[1]);
+        int r = replay_pcap(argv[1]);
         printf("replay_pcap returned: %d\n", r);
-        sleep(10);
-        // Чтобы wrapper не завершался мгновенно (и чтобы увидеть, не упал ли connmand)
+        sleep(5);
+
+        kill(pid, SIGTERM);
         int st = 0;
         waitpid(pid, &st, 0);
         printf("connmand exited with status: %d\n", WIFEXITED(st) ? WEXITSTATUS(st) : -1);

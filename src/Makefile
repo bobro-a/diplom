@@ -33,4 +33,4 @@ html:
     		-output-dir=coverage_report/
 
 test:
-	./dhcp-wrapper seeds/dhcp_packet_00000_20251217145830.pcap
+	sudo ./dhcp-wrapper seeds/dhcp_packet_00000_20251217145830.pcap
