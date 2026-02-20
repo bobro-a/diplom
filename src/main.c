@@ -16,10 +16,99 @@
 #include <linux/if_packet.h>
 #include <net/if.h>
 
+#include <systemd/sd-bus.h>
 
-// const int PORT=68;
+char* find_active_service_path(sd_bus *bus) {
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    char *found_path = NULL;
+
+    while (1){
+
+    int r = sd_bus_call_method(bus,
+                               "net.connman",           // Service
+                               "/",                     // Object Path
+                               "net.connman.Manager",   // Interface
+                               "GetServices",           // Method
+                               &error,
+                               &reply,
+                               "");                     // No input arguments
+    
+    
+    if (r < 0){
+        sd_bus_error_free(&error);
+        usleep(50000);
+        continue;
+    }
+
+    r = sd_bus_message_enter_container(reply, 'a', "(oa{sv})");
+    if (r > 0) {
+        const char *path;
+        r = sd_bus_message_enter_container(reply, 'r', "oa{sv}"); // Входим в структуру
+        if (r > 0) {
+            sd_bus_message_read(reply, "o", &path); // Читаем путь
+            found_path = strdup(path);
+            sd_bus_message_exit_container(reply); 
+        }
+        sd_bus_message_exit_container(reply);    
+    }
+    
+    sd_bus_message_unref(reply);
+
+    if (found_path) break;
+    usleep(50000);
+    }
+
+    while (1){
+        int r = sd_bus_call_method(bus, 
+                                       "net.connman", 
+                                       found_path, 
+                                       "net.connman.Service", 
+                                       "GetProperties", 
+                                       &error, 
+                                       &reply,
+                               "");
+        if (r < 0) {
+            fprintf(stderr, "[DBUS] GetProperties failed: %s\n", error.message);
+            sd_bus_error_free(&error);
+            free(found_path);
+            return NULL;
+        }
+
+        int ready_to_exit = 0;
+        if (sd_bus_message_enter_container(reply, 'a', "{sv}") > 0) {
+            const char *key;
+            while (sd_bus_message_enter_container(reply, 'e', "sv") > 0) {
+                sd_bus_message_read(reply, "s", &key);
+            
+                if (strcmp(key, "State") == 0) {
+                    const char *state;
+                    sd_bus_message_read(reply, "v", "s", &state);
+                    printf("[DBUS] Service State: %s\n", state);
+                    if (strcmp(state, "configuration") == 0 || 
+                        strcmp(state, "ready") == 0 || 
+                        strcmp(state, "online") == 0) {
+                        ready_to_exit = 1;
+                    }
+                } else {
+                    // Пропускаем остальные свойства
+                    sd_bus_message_skip(reply, "v");
+                }
+                sd_bus_message_exit_container(reply);
+            }
+            sd_bus_message_exit_container(reply);
+        }
+
+        sd_bus_message_unref(reply);
+        if (ready_to_exit) break; 
+        usleep(50000);
+    }
+    
+    return found_path;
+}
 
 static int replay_pcap(const char *pcap_path) {
+    printf("start replay_pcap");
     char errbuf[PCAP_ERRBUF_SIZE] = {0};
     pcap_t *p = pcap_open_offline(pcap_path, errbuf);//pcap_t * — дескриптор для чтения пакетов (используется в pcap_loop, pcap_next и т.д.)
     if (!p) {
@@ -54,7 +143,9 @@ static int replay_pcap(const char *pcap_path) {
                 printf("[DEBUG] Raw packet sent: %zd bytes\n", n);
             }
         }
-        usleep(10 * 1000); // Небольшая пауза между пакетами
+        #ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+            usleep(10 * 1000); 
+        #endif
     }
 
     close(sock);
@@ -85,7 +176,7 @@ int main(int argc, char *argv[]) {
         char *args[] = {
                 bin,         // debug
                 "-n",//--nodaemon
-                "-d", "gdhcp/dhcp.c,gdhcp/client.c",
+                "-d", "gdhcp/dhcp.c,gdhcp/client.c,src/dhcp.c",
                 NULL
         };
         execv(bin, args);
@@ -95,15 +186,31 @@ int main(int argc, char *argv[]) {
     } else {
         //Родительский процесс
         printf("wrapper start with pid: %d\n", pid);
-        sleep(2);
 
-        int r = replay_pcap(argv[1]);
+        //инициализируем шину, чтобы состояние connman узнать
+        sd_bus *bus = NULL;
+        int r=sd_bus_open_system(&bus);
+        if (r < 0) {
+            fprintf(stderr, "Не удалось открыть шину: %s\n", strerror(-r));
+            return 1;
+        }
+
+        char *path = find_active_service_path(bus);
+        printf("service_path: %s\n",path);
+        // sleep(2);
+
+        r = replay_pcap(argv[1]);
         printf("replay_pcap returned: %d\n", r);
-        sleep(5);
+        // #ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+        sleep(5); 
+        // #endif
 
         kill(pid, SIGTERM);
         int st = 0;
         waitpid(pid, &st, 0);
+        if (WIFSIGNALED(st)) {
+            raise(WTERMSIG(st));
+        }
         printf("connmand exited with status: %d\n", WIFEXITED(st) ? WEXITSTATUS(st) : -1);
     }
 

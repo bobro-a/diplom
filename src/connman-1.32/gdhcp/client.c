@@ -1486,7 +1486,7 @@ static int ipv4ll_recv_arp_packet(GDHCPClient* dhcp_client)
 
 static bool check_package_owner(GDHCPClient* dhcp_client, gpointer pkt)
 {//проверяем принадлежит ли пакет этому клиенту по xid
-    printf("check_package_owner\n");
+	printf("check_package_owner\n");
     if (dhcp_client->type == G_DHCP_IPV6)
     {
         struct dhcpv6_packet* packet6 = pkt;
@@ -1503,15 +1503,21 @@ static bool check_package_owner(GDHCPClient* dhcp_client, gpointer pkt)
 			return false;
 	} else {
 		struct dhcp_packet *packet = pkt;
-
+		printf("check_package_owner v4\n");
 		if (packet->xid != dhcp_client->xid)
 			return false;
+
+		printf("check_package_owner xid match\n");
 
 		if (packet->hlen != 6)
 			return false;
 
+		printf("check_package_owner hlen == 6\n");
+
 		if (memcmp(packet->chaddr, dhcp_client->mac_address, 6))
 			return false;
+
+		printf("check_package_owner memcmp\n");
 	}
 
 	return true;
@@ -1539,6 +1545,7 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 static int switch_listening_mode(GDHCPClient *dhcp_client,
 					ListenMode listen_mode)
 {
+	printf("switch_listening_mode start");
 	GIOChannel *listener_channel;
 	int listener_sockfd;
 
@@ -2272,7 +2279,6 @@ static void get_request(GDHCPClient* dhcp_client, struct dhcp_packet* packet)
 static gboolean listener_event(GIOChannel* channel, GIOCondition condition,
                                gpointer user_data)
 {//каждый раз, когда приходит пакет вызывается этот обработчик
-    printf("[DEBUG] listener_event client.c\n");
     GDHCPClient* dhcp_client = user_data;
     struct sockaddr_in dst_addr = {0};
     struct dhcp_packet packet;
@@ -2286,6 +2292,8 @@ static gboolean listener_event(GIOChannel* channel, GIOCondition condition,
     uint16_t pkt_len = 0;
     int count;
     int re;
+
+	printf("starting listener_event\n");
 
 	if (condition & (G_IO_NVAL | G_IO_ERR | G_IO_HUP)) {
 		dhcp_client->listener_watch = 0;

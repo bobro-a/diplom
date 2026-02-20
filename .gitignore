@@ -1,1 +1,12 @@
 .idea
+src/cov_data
+src/dhcp-wrapper
+src/dhcp-wrapper_cov
+src/startConnman.sh
+src/startNetwork.sh
+src/connman-1.32/default.profraw
+src/coverage_report/
+src/llvm-project/
+src/out/
+src/primer_mutator.c
+src/status_connman.c

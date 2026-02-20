@@ -5,22 +5,22 @@ build: afl cov
 
 afl:
 	afl-clang-fast -O2 -g $(shell pkg-config --cflags glib-2.0) \
-  	-o dhcp-wrapper main.c $(shell pkg-config --libs glib-2.0) -lpcap
+  	-o dhcp-wrapper main.c $(shell pkg-config --libs glib-2.0) -lpcap -lsystemd
 
 cov:
 	clang-19 -O0 -g -fprofile-instr-generate -fcoverage-mapping \
       $(shell pkg-config --cflags glib-2.0) \
-      -o dhcp-wrapper_cov main.c $(shell pkg-config --libs glib-2.0) -lpcap
+      -o dhcp-wrapper_cov main.c $(shell pkg-config --libs glib-2.0) -lpcap -lsystemd
 
 afl-fuzz:
-	afl-fuzz -i seeds -o out -t 500 -- ./dhcp-wrapper @@
+	afl-fuzz -i seeds -o out -- ./dhcp-wrapper @@
 
 gen:
 	for testcase in out/default/queue/id:*; do \
-    [ -f "$testcase" ] && \
-    LLVM_PROFILE_FILE="cov_data/$(basename $testcase).profraw" \
-    timeout 30 ./dhcp-wrapper_cov "$testcase" \
-    done
+		[ -f "$$testcase" ] || continue; \
+		sudo LLVM_PROFILE_FILE="cov_data/$$(basename $$testcase).profraw" \
+		timeout 30 ./dhcp-wrapper_cov "$$testcase"; \
+	done
 
 find:
 	find cov_data -name "*.profraw" -print0 | \
