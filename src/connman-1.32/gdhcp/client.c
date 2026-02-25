@@ -1318,6 +1318,7 @@ static bool sanity_check(struct ip_udp_dhcp_packet *packet, int bytes)
 static int dhcp_recv_l2_packet(struct dhcp_packet *dhcp_pkt, int fd,
 				struct sockaddr_in *dst_addr)
 {
+	printf("dhcp_recv_l2_packet\n");
 	int bytes;
 	struct ip_udp_dhcp_packet packet;
 	uint16_t check;
@@ -1545,7 +1546,7 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 static int switch_listening_mode(GDHCPClient *dhcp_client,
 					ListenMode listen_mode)
 {
-	printf("switch_listening_mode start");
+	printf("switch_listening_mode start\n");
 	GIOChannel *listener_channel;
 	int listener_sockfd;
 
@@ -1602,6 +1603,7 @@ static int switch_listening_mode(GDHCPClient *dhcp_client,
 				G_IO_IN | G_IO_NVAL | G_IO_ERR | G_IO_HUP,
 						listener_event, dhcp_client,
 								NULL);
+	printf("listener_event dhcp_recv_l2_packet");
 	g_io_channel_unref(listener_channel);
 
 	return 0;

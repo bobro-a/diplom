@@ -1,0 +1,6 @@
+# environment variables:
+AFL_CUSTOM_INFO_PROGRAM=./dhcp-wrapper
+AFL_CUSTOM_INFO_PROGRAM_ARGV=@@
+AFL_CUSTOM_INFO_OUT=out/default
+# command line:
+'afl-fuzz' '-t' '3000' '-i' 'seeds' '-o' 'out' '--' './dhcp-wrapper' '@@'
