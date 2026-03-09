@@ -1,24 +1,23 @@
 #include <glib.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <sys/wait.h>
 
 #include <pcap/pcap.h>
-
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
-#include <netinet/in.h>
 #include <net/ethernet.h>
-#include <netinet/ip.h>
-#include <netinet/udp.h>
+#include <sys/types.h>
 
 #include <linux/if_packet.h>
 #include <net/if.h>
 
 #include <systemd/sd-bus.h>
 
-char *find_active_service_path(sd_bus *bus)
+#include "connman-1.32/gdhcp/common.h"
+#include <sys/types.h>
+
+char *wait_connmand(sd_bus *bus)
 {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = NULL;
@@ -65,7 +64,7 @@ char *find_active_service_path(sd_bus *bus)
         usleep(10000);
     }
 
-    attempts=0;
+    attempts = 0;
     while (attempts++ < 20)
     {
         int r = sd_bus_call_method(bus,
@@ -123,7 +122,25 @@ char *find_active_service_path(sd_bus *bus)
     return found_path;
 }
 
-static int replay_pcap(const char *pcap_path)
+struct ip_udp_dhcp_packet *recv_discover(int sockfd, struct sockaddr_ll sll)
+{ // todo добавить pcap
+  // todo интерфейс добавить
+    struct ip_udp_dhcp_packet *pkt = malloc(sizeof(struct ip_udp_dhcp_packet));
+    struct sockaddr src_addr;
+    socklen_t addrlen = sizeof(src_addr);
+    ssize_t n = recvfrom(sockfd, pkt, sizeof(struct ip_udp_dhcp_packet), 0, &src_addr, &addrlen);
+
+    if (n < 0)
+    {
+        perror("recvfrom");
+        free(pkt);
+        return NULL;
+    }
+
+    return pkt;
+}
+
+static int send_pcap(int sockfd, struct sockaddr_ll sll, const char *pcap_path, uint32_t client_xid)
 {
     printf("start replay_pcap");
     char errbuf[PCAP_ERRBUF_SIZE] = {0};
@@ -134,18 +151,6 @@ static int replay_pcap(const char *pcap_path)
         return 1;
     }
 
-    int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-    if (sock < 0)
-    {
-        perror("socket");
-        pcap_close(p);
-        return 1;
-    }
-
-    struct sockaddr_ll device = {0};
-    device.sll_ifindex = if_nametoindex("veth-server"); // todo изменить
-    device.sll_family = AF_PACKET;
-
     struct pcap_pkthdr *hdr = NULL;
     const u_char *pkt = NULL;
 
@@ -153,9 +158,12 @@ static int replay_pcap(const char *pcap_path)
     {
         if (hdr->caplen > 0)
         {
+            struct ip_udp_dhcp_packet *data = (struct ip_udp_dhcp_packet *)pkt;
+            data->data.xid = client_xid;
+
             // 3. Отправляем пакет целиком (вместе с Ethernet заголовком)
-            ssize_t n = sendto(sock, pkt, hdr->caplen, 0,
-                               (struct sockaddr *)&device, sizeof(device));
+            ssize_t n = sendto(sockfd, pkt, hdr->caplen, 0,
+                               (struct sockaddr *)&sll, sizeof(sll));
 
             if (n < 0)
             {
@@ -166,12 +174,7 @@ static int replay_pcap(const char *pcap_path)
                 printf("[DEBUG] Raw packet sent: %zd bytes\n", n);
             }
         }
-#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
-        usleep(10000);
-#endif
     }
-
-    close(sock);
     pcap_close(p);
     return 0;
 }
@@ -209,6 +212,19 @@ int main(int argc, char *argv[])
     system("killall -9 connmand 2>/dev/null");
     setup_veth_interfaces();
 
+    int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (sock < 0)
+    {
+        perror("socket");
+        return 1;
+    }
+
+    struct sockaddr_ll device = {0};
+    device.sll_ifindex = if_nametoindex("veth-server");
+    device.sll_family = AF_PACKET;
+
+    bind(sock, (struct sockaddr *)&device, sizeof(device));
+
     pid_t pid = fork();
 
     if (pid == -1)
@@ -218,7 +234,6 @@ int main(int argc, char *argv[])
     }
     if (pid == 0)
     {
-        // Дочерний процесс
         printf("Binary connmand start!\n");
         setenv("LLVM_PROFILE_FILE", "cov_data/connmand_%p.profraw", 1);
         char *bin = "/home/bobro/Desktop/diplom/src/connman-1.32/src/connmand";
@@ -246,15 +261,14 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        char *path = find_active_service_path(bus);
+        char *path = wait_connmand(bus);
         printf("service_path: %s\n", path);
-        // sleep(2);
 
-        r = replay_pcap(argv[1]);
+        struct ip_udp_dhcp_packet *packet = recv_discover(sock, device);
+
+        r = send_pcap(sock, device, argv[1], packet->data.xid);
         printf("replay_pcap returned: %d\n", r);
-        // #ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
         sleep(1);
-        // #endif
 
         kill(pid, SIGTERM);
         int st = 0;
@@ -264,6 +278,7 @@ int main(int argc, char *argv[])
             raise(WTERMSIG(st));
         }
         printf("connmand exited with status: %d\n", WIFEXITED(st) ? WEXITSTATUS(st) : -1);
+        close(sock);
     }
 
     return 0;

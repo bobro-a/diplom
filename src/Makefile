@@ -6,12 +6,12 @@ build: afl cov
 
 afl:
 	afl-clang-fast -O0 -g $(shell pkg-config --cflags glib-2.0) \
-  	-o dhcp-wrapper main.c $(shell pkg-config --libs glib-2.0) -lpcap -lsystemd
+  	-o dhcp-wrapper main.c $(shell pkg-config --libs glib-2.0) -lpcap -lsystemd -I/usr/include/x86_64-linux-gnu/
 
 cov:
 	clang -O0 -g -fprofile-instr-generate -fcoverage-mapping \
       $(shell pkg-config --cflags glib-2.0) \
-      -o dhcp-wrapper_cov main.c $(shell pkg-config --libs glib-2.0) -lpcap -lsystemd
+      -o dhcp-wrapper_cov main.c $(shell pkg-config --libs glib-2.0) -lpcap -lsystemd -I/usr/include/x86_64-linux-gnu/
 
 afl-fuzz:
 	afl-fuzz -t 3000 -i seeds -o out -- ./dhcp-wrapper @@
@@ -38,3 +38,6 @@ html:
 
 test:
 	sudo ./dhcp-wrapper seeds/dhcp_packet_1.pcap
+
+mutators:
+	clang -shared -Wall -O3 -I/home/bobro/Desktop/diplom-copy/src/AFLplusplus/include/ $(shell pkg-config --cflags glib-2.0) mutator_dhcpv4.c -o mutator_dhcpv4.so
