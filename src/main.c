@@ -123,26 +123,59 @@ char *wait_connmand(sd_bus *bus)
 }
 
 struct ip_udp_dhcp_packet *recv_discover(int sockfd, struct sockaddr_ll sll)
-{ // todo добавить pcap
-  // todo интерфейс добавить
-    struct ip_udp_dhcp_packet *pkt = malloc(sizeof(struct ip_udp_dhcp_packet));
+{
+    int size = sizeof(struct ether_header) + sizeof(struct ip_udp_dhcp_packet);
+    char buf[size];
     struct sockaddr src_addr;
     socklen_t addrlen = sizeof(src_addr);
-    ssize_t n = recvfrom(sockfd, pkt, sizeof(struct ip_udp_dhcp_packet), 0, &src_addr, &addrlen);
 
-    if (n < 0)
+    printf("[DEBUG] Waiting for DHCP Discover...\n");
+
+    while (1)
     {
-        perror("recvfrom");
-        free(pkt);
-        return NULL;
-    }
+        ssize_t n = recvfrom(sockfd, buf, size, 0, (struct sockaddr *)&src_addr, &addrlen);
+        if (n < 0)
+        {
+            perror("recvfrom");
+            return NULL;
+        }
 
-    return pkt;
+        struct ip_udp_dhcp_packet *temp_pkt = (struct ip_udp_dhcp_packet *)(buf + sizeof(struct ether_header));
+
+        if (temp_pkt->udp.uh_dport != htons(67))
+            continue;
+
+        uint8_t *options = temp_pkt->data.options;
+        int is_discover = 0;
+        for (int i = 0; i < DHCP_OPTIONS_BUFSIZE + EXTEND_FOR_BUGGY_SERVERS; i++)
+        { // 308 — стандартный размер поля options
+            if (options[i] == 53)
+            { // Код опции DHCP Message Type
+                if (options[i + 2] == DHCPDISCOVER)
+                {
+                    is_discover = 1;
+                }
+                break;
+            }
+            if (options[i] == DHCP_END)
+                break;
+        }
+        if (is_discover)
+        {
+            struct ip_udp_dhcp_packet *result = malloc(sizeof(struct ip_udp_dhcp_packet));
+            if (result)
+            {
+                memcpy(result, temp_pkt, sizeof(struct ip_udp_dhcp_packet));
+                return result;
+            }
+            return NULL;
+        }
+    }
 }
 
-static int send_pcap(int sockfd, struct sockaddr_ll sll, const char *pcap_path, uint32_t client_xid)
+static int send_pcap(int sockfd, struct sockaddr_ll sll, const char *pcap_path, uint32_t client_xid, uint8_t client_chaddr[16])
 {
-    printf("start replay_pcap");
+    printf("start send_pcap\n");
     char errbuf[PCAP_ERRBUF_SIZE] = {0};
     pcap_t *p = pcap_open_offline(pcap_path, errbuf); // pcap_t * — дескриптор для чтения пакетов (используется в pcap_loop, pcap_next и т.д.)
     if (!p)
@@ -158,11 +191,18 @@ static int send_pcap(int sockfd, struct sockaddr_ll sll, const char *pcap_path, 
     {
         if (hdr->caplen > 0)
         {
-            struct ip_udp_dhcp_packet *data = (struct ip_udp_dhcp_packet *)pkt;
+            u_char mutable_pkt[hdr->caplen];
+            memcpy(mutable_pkt, pkt, hdr->caplen);
+
+            struct ip_udp_dhcp_packet *data = (struct ip_udp_dhcp_packet *)(mutable_pkt + sizeof(struct ether_header));
             data->data.xid = client_xid;
+            memcpy(data->data.chaddr, client_chaddr, 16);
+
+            struct ether_header *eth = (struct ether_header *)mutable_pkt;
+            memcpy(eth->ether_shost, client_chaddr, 6);
 
             // 3. Отправляем пакет целиком (вместе с Ethernet заголовком)
-            ssize_t n = sendto(sockfd, pkt, hdr->caplen, 0,
+            ssize_t n = sendto(sockfd, mutable_pkt, hdr->caplen, 0,
                                (struct sockaddr *)&sll, sizeof(sll));
 
             if (n < 0)
@@ -212,7 +252,7 @@ int main(int argc, char *argv[])
     system("killall -9 connmand 2>/dev/null");
     setup_veth_interfaces();
 
-    int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    int sock = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     if (sock < 0)
     {
         perror("socket");
@@ -223,7 +263,7 @@ int main(int argc, char *argv[])
     device.sll_ifindex = if_nametoindex("veth-server");
     device.sll_family = AF_PACKET;
 
-    bind(sock, (struct sockaddr *)&device, sizeof(device));
+    // bind(sock, (struct sockaddr *)&device, sizeof(device));
 
     pid_t pid = fork();
 
@@ -253,20 +293,23 @@ int main(int argc, char *argv[])
         printf("wrapper start with pid: %d\n", pid);
 
         // инициализируем шину, чтобы состояние connman узнать
-        sd_bus *bus = NULL;
-        int r = sd_bus_open_system(&bus);
-        if (r < 0)
-        {
-            fprintf(stderr, "Не удалось открыть шину: %s\n", strerror(-r));
-            return 1;
-        }
+        // sd_bus *bus = NULL;
+        // int r = sd_bus_open_system(&bus);
+        // if (r < 0)
+        // {
+        //     fprintf(stderr, "Не удалось открыть шину: %s\n", strerror(-r));
+        //     return 1;
+        // }
 
-        char *path = wait_connmand(bus);
-        printf("service_path: %s\n", path);
+        // char *path = wait_connmand(bus);
+        // printf("service_path: %s\n", path);
 
         struct ip_udp_dhcp_packet *packet = recv_discover(sock, device);
+        if (packet == NULL)
+            _exit(1);
 
-        r = send_pcap(sock, device, argv[1], packet->data.xid);
+        printf("\ndiscover packet received with xid %x!\n\n", packet->data.xid);
+        int r = send_pcap(sock, device, argv[1], packet->data.xid,packet->data.chaddr);
         printf("replay_pcap returned: %d\n", r);
         sleep(1);
 

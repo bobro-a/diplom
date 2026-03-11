@@ -439,6 +439,7 @@ static uint16_t dhcp_attempt_secs(GDHCPClient* dhcp_client)
 
 static int send_discover(GDHCPClient *dhcp_client, uint32_t requested)
 {
+	printf("[client] send_discover\n");
 	struct dhcp_packet packet;
 
 	debug(dhcp_client, "sending DHCP discover request");
@@ -1297,6 +1298,7 @@ static int dhcp_l2_socket(int ifindex)
 
 static bool sanity_check(struct ip_udp_dhcp_packet *packet, int bytes)
 {
+	printf("sanity_check start\n");
 	if (packet->ip.protocol != IPPROTO_UDP)
 		return false;
 
@@ -1312,6 +1314,7 @@ static bool sanity_check(struct ip_udp_dhcp_packet *packet, int bytes)
 	if (ntohs(packet->udp.len) != (uint16_t)(bytes - sizeof(packet->ip)))
 		return false;
 
+	printf("sanity_check return true\n");
 	return true;
 }
 
@@ -1326,15 +1329,17 @@ static int dhcp_recv_l2_packet(struct dhcp_packet *dhcp_pkt, int fd,
 	memset(&packet, 0, sizeof(packet));
 
 	bytes = read(fd, &packet, sizeof(packet));
+	printf("read\n");
 	if (bytes < 0)
 		return -1;
-
+printf("size\n");
 	if (bytes < (int) (sizeof(packet.ip) + sizeof(packet.udp)))
 		return -1;
-
-	if (bytes < ntohs(packet.ip.tot_len))
+printf("size 2\n");
+	if (bytes < ntohs(packet.ip.tot_len)){
 		/* packet is bigger than sizeof(packet), we did partial read */
 		return -1;
+	}
 
 	/* ignore any extra garbage bytes */
 	bytes = ntohs(packet.ip.tot_len);
@@ -1346,22 +1351,24 @@ static int dhcp_recv_l2_packet(struct dhcp_packet *dhcp_pkt, int fd,
 	packet.ip.check = 0;
 	if (check != dhcp_checksum(&packet.ip, sizeof(packet.ip)))
 		return -1;
-
+	printf("dhcp_checksum ok!\n");
 	/* verify UDP checksum. IP header has to be modified for this */
 	memset(&packet.ip, 0, offsetof(struct iphdr, protocol));
 	/* ip.xx fields which are not memset: protocol, check, saddr, daddr */
 	packet.ip.tot_len = packet.udp.len; /* yes, this is needed */
 	check = packet.udp.check;
 	packet.udp.check = 0;
-	if (check && check != dhcp_checksum(&packet, bytes))
-		return -1;
+	// if (check && check != dhcp_checksum(&packet, bytes))//todo вот здесь ложимся
+	// 	return -1;
 
+	printf("dhcp_checksum2 ok!\n");
 	memcpy(dhcp_pkt, &packet.data, bytes - (sizeof(packet.ip) +
 							sizeof(packet.udp)));
 
 	if (dhcp_pkt->cookie != htonl(DHCP_MAGIC))
 		return -1;
 
+	printf("cookies ok!\n");
 	dst_addr->sin_addr.s_addr = packet.ip.daddr;
 
 	return bytes - (sizeof(packet.ip) + sizeof(packet.udp));
@@ -1487,7 +1494,7 @@ static int ipv4ll_recv_arp_packet(GDHCPClient* dhcp_client)
 
 static bool check_package_owner(GDHCPClient* dhcp_client, gpointer pkt)
 {//проверяем принадлежит ли пакет этому клиенту по xid
-	printf("check_package_owner\n");
+	printf("!!!check_package_owner\n");
     if (dhcp_client->type == G_DHCP_IPV6)
     {
         struct dhcpv6_packet* packet6 = pkt;
@@ -1603,7 +1610,7 @@ static int switch_listening_mode(GDHCPClient *dhcp_client,
 				G_IO_IN | G_IO_NVAL | G_IO_ERR | G_IO_HUP,
 						listener_event, dhcp_client,
 								NULL);
-	printf("listener_event dhcp_recv_l2_packet");
+	printf("listener_event dhcp_recv_l2_packet\n");
 	g_io_channel_unref(listener_channel);
 
 	return 0;
@@ -2379,7 +2386,7 @@ static gboolean listener_event(GIOChannel* channel, GIOCondition condition,
 		if (!message_type)
 			return TRUE;
 	}
-
+	printf("the package in owner\n");
 	if (!message_type && !client_id)
 		/* No message type / client id option, ignore package */
 		return TRUE;
@@ -2387,6 +2394,7 @@ static gboolean listener_event(GIOChannel* channel, GIOCondition condition,
 	debug(dhcp_client, "received DHCP packet xid 0x%04x "
 		"(current state %d)", ntohl(xid), dhcp_client->state);
 
+	printf("dhcp_client->state\n");
 	switch (dhcp_client->state) {
 	case INIT_SELECTING:
 		if (*message_type != DHCPOFFER)
