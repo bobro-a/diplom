@@ -1,209 +1,142 @@
-#include <glib.h>
-#include <stdio.h>
-#include <unistd.h>
+#include "utils.h"
 
-#include <pcap/pcap.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-
-#include <net/ethernet.h>
-#include <sys/types.h>
-
-#include <linux/if_packet.h>
-#include <net/if.h>
-
-#include <systemd/sd-bus.h>
-
-#include "connman-1.32/gdhcp/common.h"
-#include <sys/types.h>
-
-char *wait_connmand(sd_bus *bus)
+void debug(const char *format, ...)
 {
-    sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus_message *reply = NULL;
-    char *found_path = NULL;
+    printf("[DEBUG] ");
 
-    int attempts = 0;
-    while (attempts++ < 20)
-    {
+    va_list args;
+    va_start(args, format);
 
-        int r = sd_bus_call_method(bus,
-                                   "net.connman",         // Service
-                                   "/",                   // Object Path
-                                   "net.connman.Manager", // Interface
-                                   "GetServices",         // Method
-                                   &error,
-                                   &reply,
-                                   ""); // No input arguments
+    vprintf(format, args);
 
-        if (r < 0)
-        {
-            sd_bus_error_free(&error);
-            usleep(10000);
-            continue;
-        }
+    va_end(args);
 
-        r = sd_bus_message_enter_container(reply, 'a', "(oa{sv})");
-        if (r > 0)
-        {
-            const char *path;
-            r = sd_bus_message_enter_container(reply, 'r', "oa{sv}"); // Входим в структуру
-            if (r > 0)
-            {
-                sd_bus_message_read(reply, "o", &path); // Читаем путь
-                found_path = strdup(path);
-                sd_bus_message_exit_container(reply);
-            }
-            sd_bus_message_exit_container(reply);
-        }
-
-        sd_bus_message_unref(reply);
-
-        if (found_path)
-            break;
-        usleep(10000);
-    }
-
-    attempts = 0;
-    while (attempts++ < 20)
-    {
-        int r = sd_bus_call_method(bus,
-                                   "net.connman",
-                                   found_path,
-                                   "net.connman.Service",
-                                   "GetProperties",
-                                   &error,
-                                   &reply,
-                                   "");
-        if (r < 0)
-        {
-            fprintf(stderr, "[DBUS] GetProperties failed: %s\n", error.message);
-            sd_bus_error_free(&error);
-            free(found_path);
-            return NULL;
-        }
-
-        int ready_to_exit = 0;
-        if (sd_bus_message_enter_container(reply, 'a', "{sv}") > 0)
-        {
-            const char *key;
-            while (sd_bus_message_enter_container(reply, 'e', "sv") > 0)
-            {
-                sd_bus_message_read(reply, "s", &key);
-
-                if (strcmp(key, "State") == 0)
-                {
-                    const char *state;
-                    sd_bus_message_read(reply, "v", "s", &state);
-                    printf("[DBUS] Service State: %s\n", state);
-                    if (strcmp(state, "configuration") == 0 ||
-                        strcmp(state, "ready") == 0 ||
-                        strcmp(state, "online") == 0)
-                    {
-                        ready_to_exit = 1;
-                    }
-                }
-                else
-                {
-                    // Пропускаем остальные свойства
-                    sd_bus_message_skip(reply, "v");
-                }
-                sd_bus_message_exit_container(reply);
-            }
-            sd_bus_message_exit_container(reply);
-        }
-
-        sd_bus_message_unref(reply);
-        if (ready_to_exit)
-            break;
-        usleep(10000);
-    }
-
-    return found_path;
+    printf("\n");
 }
 
-struct ip_udp_dhcp_packet *recv_discover(int sockfd, struct sockaddr_ll sll)
+/**
+ * @brief Читает PCAP файл и извлекает из него DHCP пакеты.
+ * * Функция выделяет память под массив структур packet_t. Поддерживает IPv4 и IPv6.
+ * * @param pcap_path Путь к файлу .pcap.
+ * @param out_count Указатель, куда будет записано количество успешно прочитанных пакетов. Необходимо иницилизировать вне функции.
+ * @return packet_t* Указатель на массив пакетов или NULL при ошибке. Требует free().
+ */
+packet_t *parse_pcap(const char *pcap_path, size_t *out_count)
 {
-    int size = sizeof(struct ether_header) + sizeof(struct ip_udp_dhcp_packet);
-    char buf[size];
-    struct sockaddr src_addr;
-    socklen_t addrlen = sizeof(src_addr);
-
-    printf("[DEBUG] Waiting for DHCP Discover...\n");
-
-    while (1)
-    {
-        ssize_t n = recvfrom(sockfd, buf, size, 0, (struct sockaddr *)&src_addr, &addrlen);
-        if (n < 0)
-        {
-            perror("recvfrom");
-            return NULL;
-        }
-
-        struct ip_udp_dhcp_packet *temp_pkt = (struct ip_udp_dhcp_packet *)(buf + sizeof(struct ether_header));
-
-        if (temp_pkt->udp.uh_dport != htons(67))
-            continue;
-
-        uint8_t *options = temp_pkt->data.options;
-        int is_discover = 0;
-        for (int i = 0; i < DHCP_OPTIONS_BUFSIZE + EXTEND_FOR_BUGGY_SERVERS; i++)
-        { // 308 — стандартный размер поля options
-            if (options[i] == 53)
-            { // Код опции DHCP Message Type
-                if (options[i + 2] == DHCPDISCOVER)
-                {
-                    is_discover = 1;
-                }
-                break;
-            }
-            if (options[i] == DHCP_END)
-                break;
-        }
-        if (is_discover)
-        {
-            struct ip_udp_dhcp_packet *result = malloc(sizeof(struct ip_udp_dhcp_packet));
-            if (result)
-            {
-                memcpy(result, temp_pkt, sizeof(struct ip_udp_dhcp_packet));
-                return result;
-            }
-            return NULL;
-        }
-    }
-}
-
-static int send_pcap(int sockfd, struct sockaddr_ll sll, const char *pcap_path, uint32_t client_xid, uint8_t client_chaddr[16])
-{
-    printf("start send_pcap\n");
     char errbuf[PCAP_ERRBUF_SIZE] = {0};
-    pcap_t *p = pcap_open_offline(pcap_path, errbuf); // pcap_t * — дескриптор для чтения пакетов (используется в pcap_loop, pcap_next и т.д.)
+    *out_count = 0;
+
+    pcap_t *p = pcap_open_offline(pcap_path, errbuf);
     if (!p)
     {
         fprintf(stderr, "pcap_open_offline: %s\n", errbuf);
-        return 1;
+        return NULL;
     }
+
+    packet_t *frames = calloc(MAX_PACKETS, sizeof(packet_t));
 
     struct pcap_pkthdr *hdr = NULL;
     const u_char *pkt = NULL;
 
-    while (pcap_next_ex(p, &hdr, &pkt) == 1)
+    while (pcap_next_ex(p, &hdr, &pkt) == 1 && *out_count < MAX_PACKETS)
     {
         if (hdr->caplen > 0)
         {
-            u_char mutable_pkt[hdr->caplen];
-            memcpy(mutable_pkt, pkt, hdr->caplen);
+            struct ether_header *eth_hdr = (struct ether_header *)pkt;
+            uint16_t ether_type = ntohs(eth_hdr->ether_type);
+            packet_t *result = &frames[*out_count];
 
-            struct ip_udp_dhcp_packet *data = (struct ip_udp_dhcp_packet *)(mutable_pkt + sizeof(struct ether_header));
-            data->data.xid = client_xid;
-            memcpy(data->data.chaddr, client_chaddr, 16);
+            if (ether_type == 0x0800)
+            {
+                result->type = PACKET_IPV4;
+                size_t copy_size = (hdr->caplen < sizeof(frame_t)) ? hdr->caplen : sizeof(frame_t);
+                memcpy(&result->pkt.v4, pkt, copy_size);
+            }
+            else if (ether_type == 0x86DD)
+            {
+                result->type = PACKET_IPV6;
+                size_t copy_size = (hdr->caplen < sizeof(framev6_t)) ? hdr->caplen : sizeof(framev6_t);
+                memcpy(&result->pkt.v6, pkt, copy_size);
+            }
 
-            struct ether_header *eth = (struct ether_header *)mutable_pkt;
-            memcpy(eth->ether_shost, client_chaddr, 6);
+            (*out_count)++;
+        }
+    }
+    pcap_close(p);
+    return frames;
+}
 
-            // 3. Отправляем пакет целиком (вместе с Ethernet заголовком)
-            ssize_t n = sendto(sockfd, mutable_pkt, hdr->caplen, 0,
-                               (struct sockaddr *)&sll, sizeof(sll));
+/**
+ * @brief Основной цикл обработки и пересылки пакетов.
+ * * Слушает сокет на наличие запросов от connman, подменяет идентификаторы (XID/MAC) 
+ * в пакетах из PCAP и отправляет их обратно клиенту.
+ * * @param sockfd Дескриптор RAW сокета.
+ * @param sll Параметры адреса сетевого интерфейса (veth-server).
+ * @param packages Массив заранее подготовленных пакетов из PCAP.
+ * @param count_pkg Количество пакетов в массиве.
+ */
+void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, size_t count_pkg)
+{
+    debug("handler packages");
+    int size = 2048;
+    char buf[size];
+    struct sockaddr src_addr;
+    socklen_t addrlen = sizeof(src_addr);
+
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
+
+    int i = 0;
+    while (i < count_pkg)
+    {
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        if (now.tv_sec - start.tv_sec > 5)
+            break;
+
+        ssize_t n = recvfrom(sockfd, buf, size, 0, (struct sockaddr *)&src_addr, &addrlen); // TODO: возможно не всегда нужно будет получать пакет
+        if (n < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                debug("nothing received 1 second");
+                continue;
+            }
+            perror("recvfrom");
+            return;
+        }
+
+        struct ether_header *eth = (struct ether_header *)buf;
+        uint16_t ether_type = ntohs(eth->ether_type);
+
+        packet_t *current_pkg = &packages[i];
+
+        if (ether_type == 0x0800 && current_pkg->type == PACKET_IPV4)
+        {
+            struct ip_udp_dhcp_packet *client_pkt = (struct ip_udp_dhcp_packet *)(buf + sizeof(struct ether_header));
+
+            if (client_pkt->udp.uh_dport != htons(SERVER_PORT))
+                continue;
+
+            uint8_t *dhcp_message_type = dhcp_get_option(&client_pkt->data, DHCP_MESSAGE_TYPE);
+            if (dhcp_message_type == NULL)
+                continue;
+
+            frame_t *pkg = &current_pkg->pkt.v4;
+
+            // исправляем отправляемый пакет
+            pkg->ip_udp_dhcp.data.xid = client_pkt->data.xid;
+            memcpy(pkg->ip_udp_dhcp.data.chaddr, client_pkt->data.chaddr, 16);
+            memcpy(pkg->eth_hdr.ether_shost, client_pkt->data.chaddr, 6);
+
+            debug("received %s", dhcpv4_msg_to_str(*dhcp_message_type));
+
+            n = sendto(sockfd, pkg, sizeof(frame_t), 0,
+                       (struct sockaddr *)&sll, sizeof(sll));
 
             if (n < 0)
             {
@@ -211,14 +144,51 @@ static int send_pcap(int sockfd, struct sockaddr_ll sll, const char *pcap_path, 
             }
             else
             {
-                printf("[DEBUG] Raw packet sent: %zd bytes\n", n);
+                debug("Raw packet sent: %zd bytes", n);
+            }
+            ++i;
+        }
+        else if (ether_type == 0x86DD && current_pkg->type == PACKET_IPV6)
+        {
+            struct ip_udp_dhcpv6_packet *client_pkt = (struct ip_udp_dhcpv6_packet *)(buf + sizeof(struct ether_header));
+
+            if (client_pkt->udp.uh_dport != htons(DHCPV6_SERVER_PORT))
+                continue;
+
+            uint8_t dhcp_message_type = client_pkt->dhcpv6.message;
+
+            framev6_t *pkg = &current_pkg->pkt.v6;
+            memcpy(pkg->ip_udp_dhcp.dhcpv6.transaction_id, client_pkt->dhcpv6.transaction_id, 3);
+            memcpy(pkg->eth_hdr.ether_dhost, eth->ether_shost, 6);
+
+            debug("received %s", dhcpv6_msg_to_str(dhcp_message_type));
+
+            n = sendto(sockfd, pkg, sizeof(framev6_t), 0,
+                       (struct sockaddr *)&sll, sizeof(sll));
+
+            if (n < 0)
+            {
+                perror("sendto raw");
+            }
+            else
+            {
+                debug("Raw packet sent: %zd bytes", n);
             }
         }
+        else
+        {
+            // debug("version client pkg != own version");
+            continue;
+        }
+        ++i;
     }
-    pcap_close(p);
-    return 0;
 }
 
+/**
+ * @brief Создает и настраивает виртуальную пару интерфейсов veth.
+ * * Удаляет старые интерфейсы veth-client/veth-server и создает новые, 
+ * переводя их в состояние UP.
+ */
 void setup_veth_interfaces()
 {
     printf("[SETUP] Recreating veth interfaces...\n");
@@ -250,6 +220,7 @@ int main(int argc, char *argv[])
     printf("Program start!\n");
 
     system("killall -9 connmand 2>/dev/null");
+    system("rm -rf /var/lib/connman/*");
     setup_veth_interfaces();
 
     int sock = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
@@ -263,7 +234,7 @@ int main(int argc, char *argv[])
     device.sll_ifindex = if_nametoindex("veth-server");
     device.sll_family = AF_PACKET;
 
-    // bind(sock, (struct sockaddr *)&device, sizeof(device));
+    bind(sock, (struct sockaddr *)&device, sizeof(device));
 
     pid_t pid = fork();
 
@@ -289,29 +260,22 @@ int main(int argc, char *argv[])
     }
     else
     {
-        // Родительский процесс
-        printf("wrapper start with pid: %d\n", pid);
+        debug("wrapper start with pid: %d", pid);
 
-        // инициализируем шину, чтобы состояние connman узнать
-        // sd_bus *bus = NULL;
-        // int r = sd_bus_open_system(&bus);
-        // if (r < 0)
-        // {
-        //     fprintf(stderr, "Не удалось открыть шину: %s\n", strerror(-r));
-        //     return 1;
-        // }
+        size_t count_pkg = 0;
+        packet_t *fr = parse_pcap(argv[1], &count_pkg);
+        if (!fr)
+        {
+            kill(pid, SIGABRT);
+            int st = 0;
+            waitpid(pid, &st, 0);
+            exit(1);
+        }
 
-        // char *path = wait_connmand(bus);
-        // printf("service_path: %s\n", path);
+        handler_packages(sock, device, fr, count_pkg);
 
-        struct ip_udp_dhcp_packet *packet = recv_discover(sock, device);
-        if (packet == NULL)
-            _exit(1);
-
-        printf("\ndiscover packet received with xid %x!\n\n", packet->data.xid);
-        int r = send_pcap(sock, device, argv[1], packet->data.xid,packet->data.chaddr);
-        printf("replay_pcap returned: %d\n", r);
-        sleep(1);
+        free(fr);
+        close(sock);
 
         kill(pid, SIGTERM);
         int st = 0;
@@ -320,9 +284,47 @@ int main(int argc, char *argv[])
         {
             raise(WTERMSIG(st));
         }
-        printf("connmand exited with status: %d\n", WIFEXITED(st) ? WEXITSTATUS(st) : -1);
-        close(sock);
+        else if (WIFEXITED(st))
+        {
+            int exit_code = WEXITSTATUS(st);
+            printf("connmand exited with status: %d\n", exit_code);
+
+            if (exit_code != 0)
+            {
+                printf("[!] Crash detected via non-zero exit code! Aborting wrapper...\n");
+                raise(SIGTERM);
+            }
+        }
     }
 
     return 0;
+}
+
+void crashes_detect(char *filename)
+{
+    int sock = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (sock < 0)
+    {
+        perror("socket");
+
+        exit(1);
+    }
+
+    struct sockaddr_ll device = {0};
+    device.sll_ifindex = if_nametoindex("veth-server");
+    device.sll_family = AF_PACKET;
+
+    bind(sock, (struct sockaddr *)&device, sizeof(device));
+
+    size_t count = 0;
+    packet_t *fr = parse_pcap(filename, &count);
+    if (!fr)
+    {
+        exit(1);
+    }
+
+    handler_packages(sock, device, fr, count);
+
+    free(fr);
+    close(sock);
 }

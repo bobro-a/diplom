@@ -2,6 +2,7 @@
 #include "pcap.h"
 #include "afl-fuzz.h"
 #include "connman-1.32/gdhcp/common.h"
+#include "utils.h"
 
 #define PORT_SOURCE 67
 #define PORT_DEST 68
@@ -48,14 +49,14 @@ size_t afl_custom_fuzz(void *data,
     my_mutator_t *mt = (my_mutator_t *)data;
     srand(mt->saved_seed ^ rand());
 
-    FILE *log_file = fopen("/home/bobro/Desktop/diplom/src/mutator_debug.log", "a"); // TODO заменить
+    FILE *log_file = fopen("/home/bobro/Desktop/diplom/src/mutatorv6_debug.log", "a"); // TODO заменить
 
     size_t pcap_file_hdr_size = sizeof(struct pcap_file_header);
 
     if (buf_size < pcap_file_hdr_size + sizeof(struct pcap_pkthdr))
     {
         fprintf(log_file, "buf_size(%zu) < min_required(%lu)\n",
-                buf_size, pcap_file_hdr_size + sizeof(struct pcap_pkthdr) + sizeof(struct ether_header) + offsetof(struct ip_udp_dhcp_packet, data.options));
+                buf_size, pcap_file_hdr_size + sizeof(struct pcap_pkthdr) + sizeof(struct ether_header) + offsetof(struct ip_udp_dhcpv6_packet, dhcpv6.options));
         fclose(log_file);
 
         *out_buf = buf;
@@ -85,12 +86,18 @@ size_t afl_custom_fuzz(void *data,
         size_t packet_data_offset = current_offset + sizeof(struct pcap_pkthdr);
         if (packet_data_offset + pkt_hdr->caplen > mut_size)
             break;
+
+        struct ether_header *eth = (struct ether_header *)(mt->out_buf + packet_data_offset);
+        if (ntohs(eth->ether_type) != 0x86DD)
+            break;
+
         packet_count++;
 
-        size_t option_offset = packet_data_offset + sizeof(struct ether_header) + offsetof(struct ip_udp_dhcp_packet, data.options);
+        size_t option_offset = packet_data_offset + sizeof(struct ether_header) + offsetof(struct ip_udp_dhcpv6_packet, dhcpv6.options);
         if (packet_data_offset + pkt_hdr->caplen >= option_offset)
         {
-            struct ip_udp_dhcp_packet *packet = (struct ip_udp_dhcp_packet *)(mt->out_buf + packet_data_offset + sizeof(struct ether_header));
+            struct ip_udp_dhcpv6_packet *packet = (struct ip_udp_dhcpv6_packet *)(mt->out_buf + packet_data_offset + sizeof(struct ether_header));
+            packet->dhcpv6.message = rand() % 12;
             size_t options_len = (packet_data_offset + pkt_hdr->caplen) - option_offset;
             uint8_t *options = mt->out_buf + option_offset;
 
@@ -98,51 +105,22 @@ size_t afl_custom_fuzz(void *data,
                     packet_count, options_len);
 
             size_t i = 0;
-            while (i + 2 < options_len)
+            while (i + 4 < options_len)
             {
-                uint8_t opt_type = options[i];
-                if (opt_type == DHCP_END)
+                uint16_t opt_type = ntohs(*(uint16_t *)(options + i));
+                uint16_t opt_len = ntohs(*(uint16_t *)(options + i + 2));
+
+                if (i + 4 + opt_len > options_len)
                     break;
 
-                if (opt_type == 0)
+                if (opt_len > 0)
                 {
-                    i++;
-                    continue;
+                    options[i + 4 + (rand() % opt_len)] ^= (1 << (rand() % 8));
                 }
-                uint8_t opt_len = options[i + 1];
-
-                if (i + 2 + opt_len > options_len)
-                    break;
-
-                uint8_t old_type, new_type;
-                if (opt_type == DHCP_MESSAGE_TYPE && opt_len > 0)
-                {
-                    old_type = options[i + 2];
-                    options[i + 2] = (uint8_t)(rand() % 10);
-                    new_type = options[i + 2];
-
-                    fprintf(log_file, "[MUTATOR] packet№%d: Changed DHCP Message Type: %d -> %d (packet size: %zu)\n",
-                            packet_count, old_type, new_type, mut_size);
-                }
-                else if (opt_type == DHCP_LEASE_TIME && opt_len == 4)
-                {
-                    int32_t random_lease = (rand() % 11) - 5;
-
-                    uint32_t network_order_lease = htonl((uint32_t)random_lease);
-                    memcpy(&options[i + 2], &network_order_lease, opt_len);
-
-                    fprintf(log_file, "[MUTATOR] packet№%d: Changed DHCP LEASE TIME: %d\n",
-                            packet_count, random_lease);
-                }
-                i += 2 + opt_len;
+                i += 4 + opt_len;
             }
-            packet->ip.check = 0;
-            packet->ip.check = dhcp_checksum(&packet->ip, packet->ip.ihl * 4);
-            packet->udp.check = 0;
         }
         current_offset += sizeof(struct pcap_pkthdr) + pkt_hdr->caplen;
-        // int target_byte = rand() % options_len;
-        // mt->out_buf[dhcp_options_offset + target_byte] ^= (1 << (rand() % 8));
     }
 
     fclose(log_file);

@@ -44,13 +44,14 @@
 #include <glib.h>
 
 #include "gdhcp.h"
+#include "log.h"
 #include "common.h"
 #include "ipv4ll.h"
 
 #define DISCOVER_TIMEOUT 5
 #define DISCOVER_RETRIES 6
 
-#define REQUEST_TIMEOUT 5
+#define REQUEST_TIMEOUT 5//TODO поменять
 #define REQUEST_RETRIES 3
 
 typedef enum _listen_mode {
@@ -1358,7 +1359,7 @@ printf("size 2\n");
 	packet.ip.tot_len = packet.udp.len; /* yes, this is needed */
 	check = packet.udp.check;
 	packet.udp.check = 0;
-	// if (check && check != dhcp_checksum(&packet, bytes))//todo вот здесь ложимся
+	// if (check && check != dhcp_checksum(&packet, bytes))//TODO вот здесь ложимся, поэтому закооментировано, для фазинга
 	// 	return -1;
 
 	printf("dhcp_checksum2 ok!\n");
@@ -1620,7 +1621,7 @@ static void start_request(GDHCPClient* dhcp_client)
 {//отправка запроса на получение ip адреса
     debug(dhcp_client, "start request (retries %d)",
           dhcp_client->retry_times);
-
+	printf("start_request\n");
     if (dhcp_client->retry_times == REQUEST_RETRIES)
     {//если кол-во попыток исчерпана вызываем функцию "аренда не получена"
         if (dhcp_client->no_lease_cb)
@@ -1635,6 +1636,7 @@ static void start_request(GDHCPClient* dhcp_client)
 	}
 
 	send_request(dhcp_client);
+	printf("send_request\n");
 
 	dhcp_client->timeout = g_timeout_add_seconds_full(G_PRIORITY_HIGH,
 							REQUEST_TIMEOUT,
@@ -2393,12 +2395,12 @@ static gboolean listener_event(GIOChannel* channel, GIOCondition condition,
 
 	debug(dhcp_client, "received DHCP packet xid 0x%04x "
 		"(current state %d)", ntohl(xid), dhcp_client->state);
-
-	printf("dhcp_client->state\n");
+	DBG("dhcp_client->state %d, message_type %d",dhcp_client->state,*message_type);
 	switch (dhcp_client->state) {
 	case INIT_SELECTING:
-		if (*message_type != DHCPOFFER)
+		if (*message_type != DHCPOFFER){
 			return TRUE;
+		}
 
 		remove_timeouts(dhcp_client);
 		dhcp_client->timeout = 0;
@@ -2418,9 +2420,10 @@ static gboolean listener_event(GIOChannel* channel, GIOCondition condition,
 		debug(dhcp_client, "init ip %s -> %sadding broadcast flag",
 			inet_ntoa(dst_addr.sin_addr),
 			dhcp_client->request_bcast ? "" : "not ");
-
+		DBG("start request");
 		start_request(dhcp_client);
-
+		printf("start_request\n");
+		
 		return TRUE;
 	case REBOOTING:
 		if (dst_addr.sin_addr.s_addr == INADDR_BROADCAST)
