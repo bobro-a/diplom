@@ -16,3 +16,5 @@ src/*.log
 src/*.py
 src/cov*
 src/out*
+src/seed*
+src/connman*
