@@ -11,6 +11,7 @@
 
 #include <net/ethernet.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
 
 #include <linux/if_packet.h>
 #include <net/if.h>
@@ -78,5 +79,11 @@ const char *dhcpv4_msg_to_str(uint8_t type);
 const char *dhcpv6_msg_to_str(uint8_t type);
 int replace_dhcpv6_option(framev6_t *pkg, size_t *pkg_len, uint16_t opt_code, uint8_t *opt_data, uint16_t opt_len);
 uint16_t udp6_checksum(struct ip6_hdr *ip6, struct udphdr *udp, uint8_t *payload, size_t payload_len);
+void setup_veth_interfaces();
+packet_t *parse_pcap(const char *pcap_path, size_t *out_count);
+void debug(const char *format, ...);
+char *wait_connmand(sd_bus *bus);
+int enable_ethernet_tethering(sd_bus *bus);
+int wait_for_tether_interface();
 
 #endif

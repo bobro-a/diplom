@@ -158,3 +158,281 @@ uint16_t udp6_checksum(struct ip6_hdr *ip6, struct udphdr *udp, uint8_t *payload
     uint16_t result = ~sum;
     return (result == 0) ? 0xFFFF : result;
 }
+
+/**
+ * @brief Создает и настраивает виртуальную пару интерфейсов veth.
+ * * Удаляет старые интерфейсы veth-client/veth-server и создает новые,
+ * переводя их в состояние UP.
+ */
+void setup_veth_interfaces()
+{
+    printf("[SETUP] Recreating veth interfaces...\n");
+
+    // 1. Удаляем старые, если они остались (ошибка игнорируется, если их нет)
+    system("ip link delete veth-client 2>/dev/null");
+
+    // 2. Создаем пару заново
+    if (system("ip link add veth-client type veth peer name veth-server") != 0)
+    {
+        fprintf(stderr, "Failed to create veth pair\n");
+    }
+
+    system("sysctl -w net.ipv6.conf.veth-client.accept_dad=0 2>/dev/null");
+    system("sysctl -w net.ipv6.conf.veth-server.accept_dad=0 2>/dev/null");
+
+    // 3. Поднимаем оба конца
+    system("ip link set veth-client up");
+    system("ip link set veth-server up");
+
+    printf("[SETUP] Interfaces veth-client and veth-server are UP.\n");
+}
+
+/**
+ * @brief Читает PCAP файл и извлекает из него DHCP пакеты.
+ * * Функция выделяет память под массив структур packet_t. Поддерживает IPv4 и IPv6.
+ * * @param pcap_path Путь к файлу .pcap.
+ * @param out_count Указатель, куда будет записано количество успешно прочитанных пакетов. Необходимо иницилизировать вне функции.
+ * @return packet_t* Указатель на массив пакетов или NULL при ошибке. Требует free().
+ */
+packet_t *parse_pcap(const char *pcap_path, size_t *out_count)
+{
+    char errbuf[PCAP_ERRBUF_SIZE] = {0};
+    *out_count = 0;
+
+    pcap_t *p = pcap_open_offline(pcap_path, errbuf);
+    if (!p)
+    {
+        fprintf(stderr, "pcap_open_offline: %s\n", errbuf);
+        return NULL;
+    }
+
+    packet_t *frames = calloc(MAX_PACKETS, sizeof(packet_t));
+
+    struct pcap_pkthdr *hdr = NULL;
+    const u_char *pkt = NULL;
+
+    while (pcap_next_ex(p, &hdr, &pkt) == 1 && *out_count < MAX_PACKETS)
+    {
+        if (hdr->caplen > 0)
+        {
+            struct ether_header *eth_hdr = (struct ether_header *)pkt;
+            uint16_t ether_type = ntohs(eth_hdr->ether_type);
+            packet_t *result = &frames[*out_count];
+            result->len = hdr->caplen;
+
+            if (ether_type == 0x0800)
+            {
+                result->type = PACKET_IPV4;
+                size_t copy_size = (hdr->caplen < MAX_FRAME_SIZE) ? hdr->caplen : MAX_FRAME_SIZE;
+                memcpy(&result->pkt.v4, pkt, copy_size);
+            }
+            else if (ether_type == 0x86DD)
+            {
+                result->type = PACKET_IPV6;
+                size_t copy_size = (hdr->caplen < MAX_FRAME_SIZE) ? hdr->caplen : MAX_FRAME_SIZE;
+                memcpy(&result->pkt.v6, pkt, copy_size);
+            }
+
+            (*out_count)++;
+        }
+    }
+    pcap_close(p);
+    return frames;
+}
+
+void debug(const char *format, ...)
+{
+    printf("[DEBUG] ");
+
+    va_list args;
+    va_start(args, format);
+
+    vprintf(format, args);
+
+    va_end(args);
+
+    printf("\n");
+}
+
+
+char *wait_connmand(sd_bus *bus)
+{
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    char *found_path = NULL;
+
+    int attempts = 0;
+    while (attempts++ < 20)
+    {
+
+        int r = sd_bus_call_method(bus,
+                                   "net.connman",         // Service
+                                   "/",                   // Object Path
+                                   "net.connman.Manager", // Interface
+                                   "GetServices",         // Method
+                                   &error,
+                                   &reply,
+                                   ""); // No input arguments
+
+        if (r < 0)
+        {
+            sd_bus_error_free(&error);
+            usleep(10000);
+            continue;
+        }
+
+        r = sd_bus_message_enter_container(reply, 'a', "(oa{sv})");
+        if (r > 0)
+        {
+            const char *path;
+            r = sd_bus_message_enter_container(reply, 'r', "oa{sv}"); // Входим в структуру
+            if (r > 0)
+            {
+                sd_bus_message_read(reply, "o", &path); // Читаем путь
+                found_path = strdup(path);
+                sd_bus_message_exit_container(reply);
+            }
+            sd_bus_message_exit_container(reply);
+        }
+
+        sd_bus_message_unref(reply);
+
+        if (found_path)
+            break;
+        usleep(10000);
+    }
+
+    attempts = 0;
+    while (attempts++ < 20)
+    {
+        int r = sd_bus_call_method(bus,
+                                   "net.connman",
+                                   found_path,
+                                   "net.connman.Service",
+                                   "GetProperties",
+                                   &error,
+                                   &reply,
+                                   "");
+        if (r < 0)
+        {
+            fprintf(stderr, "[DBUS] GetProperties failed: %s\n", error.message);
+            sd_bus_error_free(&error);
+            free(found_path);
+            return NULL;
+        }
+
+        int ready_to_exit = 0;
+        if (sd_bus_message_enter_container(reply, 'a', "{sv}") > 0)
+        {
+            const char *key;
+            while (sd_bus_message_enter_container(reply, 'e', "sv") > 0)
+            {
+                sd_bus_message_read(reply, "s", &key);
+
+                if (strcmp(key, "State") == 0)
+                {
+                    const char *state;
+                    sd_bus_message_read(reply, "v", "s", &state);
+                    printf("[DBUS] Service State: %s\n", state);
+                    if (strcmp(state, "configuration") == 0 ||
+                        strcmp(state, "ready") == 0 ||
+                        strcmp(state, "online") == 0)
+                    {
+                        ready_to_exit = 1;
+                    }
+                }
+                else
+                {
+                    // Пропускаем остальные свойства
+                    sd_bus_message_skip(reply, "v");
+                }
+                sd_bus_message_exit_container(reply);
+            }
+            sd_bus_message_exit_container(reply);
+        }
+
+        sd_bus_message_unref(reply);
+        if (ready_to_exit)
+            break;
+        usleep(10000);
+    }
+
+    return found_path;
+}
+
+int enable_ethernet_tethering(sd_bus *bus)
+{
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    int r;
+    r = sd_bus_call_method(bus,
+                           "net.connman",                      // Destination (Service)
+                           "/net/connman/technology/ethernet", // Object Path
+                           "net.connman.Technology",           // Interface
+                           "SetProperty",                      // Method
+                           &error,
+                           &reply,
+                           "sv",                 // D-Bus Signature
+                           "Tethering", "b", 1); // Arguments
+
+    if (r < 0)
+    {
+        fprintf(stderr, "[-] Ошибка активации Tethering через D-Bus: %s\n", error.message);
+        sd_bus_error_free(&error);
+        return -1;
+    }
+
+    printf("[+] D-Bus команда на запуск DHCP-сервера (Tethering) успешно отправлена.\n");
+    sd_bus_message_unref(reply);
+    return 0;
+}
+
+int wait_for_tether_interface()
+{
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        perror("[-] Failed to create socket for ioctl");
+        return -1;
+    }
+
+    struct ifreq ifr;
+    int is_active = 0;
+    int retries = 50; // 50 попыток по 100 мс = 5 секунд таймаута
+
+    printf("[*] Waiting for 'tether' kernel interface to become UP and RUNNING...\n");
+
+    while (retries > 0)
+    {
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, "tether", IFNAMSIZ - 1); // Имя моста, который создает ConnMan
+
+        // Опрашиваем ядро о состоянии интерфейса
+        if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0)
+        {
+            // Проверяем, что интерфейс административно включен (UP)
+            // и физически готов к передаче (RUNNING)
+            if ((ifr.ifr_flags & IFF_UP) && (ifr.ifr_flags & IFF_RUNNING))
+            {
+                is_active = 1;
+                break;
+            }
+        }
+
+        usleep(100000); // Спим 100 миллисекунд перед следующей проверкой
+        retries--;
+    }
+
+    close(sock);
+
+    if (is_active)
+    {
+        printf("[+] Interface 'tether' is fully operational!\n");
+        return 0;
+    }
+    else
+    {
+        fprintf(stderr, "[-] Timeout waiting for 'tether' interface.\n");
+        return -1;
+    }
+}

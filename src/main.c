@@ -1,72 +1,5 @@
 #include "utils.h"
 
-void debug(const char *format, ...)
-{
-    printf("[DEBUG] ");
-
-    va_list args;
-    va_start(args, format);
-
-    vprintf(format, args);
-
-    va_end(args);
-
-    printf("\n");
-}
-
-/**
- * @brief Читает PCAP файл и извлекает из него DHCP пакеты.
- * * Функция выделяет память под массив структур packet_t. Поддерживает IPv4 и IPv6.
- * * @param pcap_path Путь к файлу .pcap.
- * @param out_count Указатель, куда будет записано количество успешно прочитанных пакетов. Необходимо иницилизировать вне функции.
- * @return packet_t* Указатель на массив пакетов или NULL при ошибке. Требует free().
- */
-packet_t *parse_pcap(const char *pcap_path, size_t *out_count)
-{
-    char errbuf[PCAP_ERRBUF_SIZE] = {0};
-    *out_count = 0;
-
-    pcap_t *p = pcap_open_offline(pcap_path, errbuf);
-    if (!p)
-    {
-        fprintf(stderr, "pcap_open_offline: %s\n", errbuf);
-        return NULL;
-    }
-
-    packet_t *frames = calloc(MAX_PACKETS, sizeof(packet_t));
-
-    struct pcap_pkthdr *hdr = NULL;
-    const u_char *pkt = NULL;
-
-    while (pcap_next_ex(p, &hdr, &pkt) == 1 && *out_count < MAX_PACKETS)
-    {
-        if (hdr->caplen > 0)
-        {
-            struct ether_header *eth_hdr = (struct ether_header *)pkt;
-            uint16_t ether_type = ntohs(eth_hdr->ether_type);
-            packet_t *result = &frames[*out_count];
-            result->len = hdr->caplen;
-
-            if (ether_type == 0x0800)
-            {
-                result->type = PACKET_IPV4;
-                size_t copy_size = (hdr->caplen < MAX_FRAME_SIZE) ? hdr->caplen : MAX_FRAME_SIZE;
-                memcpy(&result->pkt.v4, pkt, copy_size);
-            }
-            else if (ether_type == 0x86DD)
-            {
-                result->type = PACKET_IPV6;
-                size_t copy_size = (hdr->caplen < MAX_FRAME_SIZE) ? hdr->caplen : MAX_FRAME_SIZE;
-                memcpy(&result->pkt.v6, pkt, copy_size);
-            }
-
-            (*out_count)++;
-        }
-    }
-    pcap_close(p);
-    return frames;
-}
-
 /**
  * @brief Основной цикл обработки и пересылки пакетов.
  * * Слушает сокет на наличие запросов от connman, подменяет идентификаторы (XID/MAC)
@@ -266,34 +199,6 @@ void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, si
     }
 }
 
-/**
- * @brief Создает и настраивает виртуальную пару интерфейсов veth.
- * * Удаляет старые интерфейсы veth-client/veth-server и создает новые,
- * переводя их в состояние UP.
- */
-void setup_veth_interfaces()
-{
-    printf("[SETUP] Recreating veth interfaces...\n");
-
-    // 1. Удаляем старые, если они остались (ошибка игнорируется, если их нет)
-    system("ip link delete veth-client 2>/dev/null");
-
-    // 2. Создаем пару заново
-    if (system("ip link add veth-client type veth peer name veth-server") != 0)
-    {
-        fprintf(stderr, "Failed to create veth pair\n");
-    }
-
-    system("sysctl -w net.ipv6.conf.veth-client.accept_dad=0 2>/dev/null");
-    system("sysctl -w net.ipv6.conf.veth-server.accept_dad=0 2>/dev/null");
-
-    // 3. Поднимаем оба конца
-    system("ip link set veth-client up");
-    system("ip link set veth-server up");
-
-    printf("[SETUP] Interfaces veth-client and veth-server are UP.\n");
-}
-
 int main(int argc, char *argv[])
 {
     if (argc < 2)
@@ -333,6 +238,8 @@ int main(int argc, char *argv[])
         printf("Binary connmand start!\n");
         setenv("LLVM_PROFILE_FILE", "cov_data/connmand_%p.profraw", 1);
         setenv("ASAN_OPTIONS", "handle_segv=1:allow_user_segv_handler=0:abort_on_error=1:detect_leaks=0", 1);
+        setenv("AFL_NO_FORKSRV", "1", 1);
+
         char *bin = "/home/bobro/Desktop/diplom/src/connman-1.32/src/connmand";
         char *args[] = {
             bin,  // debug

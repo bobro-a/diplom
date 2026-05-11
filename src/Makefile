@@ -5,6 +5,7 @@ LDFLAGS = $(shell pkg-config --libs glib-2.0)
 PWD =$(shell pwd)
 CONNMAND_BIN = $(PWD)/connman-1.32/src/connmand
 CONNMAND_BIN_2 =  $(PWD)/connman-2.0/src/connmand
+CONNMAN_PATH=$(PWD)/connman-1.32
 
 afl:
 	AFL_USE_ASAN=1 afl-clang-fast -O0 -g $(CFLAGS) \
@@ -24,6 +25,21 @@ afl2:
 	$(PWD)/connman-2.0/src/connmand-log.o \
 	$(PWD)/connman-2.0/src/connmand-backtrace.o
 
+clang1:
+	clang -O0 -g \
+    -o dhcp-wrapper main.c utils.c -DHAVE_CONFIG_H $(LDFLAGS) $(CFLAGS) \
+	-lpcap -lsystemd \
+	-I/usr/include/x86_64-linux-gnu/ \
+	-I$(PWD)/connman-1.32/include/ \
+	-I/usr/lib/x86_64-linux-gnu/dbus-1.0/include/ \
+	-I/usr/include/dbus-1.0/ \
+	-I$(PWD)/connman-1.32/gdhcp/ \
+	-I$(PWD)/connman-1.32/src \
+	-I$(CONNMAN_PATH) \
+    $(PWD)/connman-1.32/gdhcp/common.c \
+    $(PWD)/connman-1.32/src/log.c \
+    $(PWD)/connman-1.32/src/backtrace.c
+
 clang:
 	clang -O0 -g -fprofile-instr-generate -fcoverage-mapping \
 	-mllvm -runtime-counter-relocation \
@@ -35,7 +51,7 @@ clang:
 	$(PWD)/connman-1.32/src/connmand-backtrace.o
 
 afl-fuzz:
-	sudo -E afl-fuzz -t 10000 -i seeds -o out -- ./dhcp-wrapper @@
+	AFL_SKIP_BIN_CHECK=1 AFL_NO_FORKSRV=1 sudo -E afl-fuzz -m none -t 10000 -i seeds_test -o out_mutator_dhcpv6 -- ./dhcp-wrapper @@
 
 gen:
 	rm -rf cov_data
@@ -62,7 +78,7 @@ test:
 	sudo ./dhcp-wrapper seeds/crash8.pcap
 
 testv6:
-	sudo ./dhcp-wrapper seeds6/ra_and_dhcp.pcap
+	sudo ./dhcp-wrapper found_crashes/seed_15.pcap
 
 mutators:
 	clang -shared -Wall -fPIC -O3 \
