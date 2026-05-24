@@ -1,5 +1,13 @@
 #include "../utils.h"
 
+#ifndef __AFL_COMPILER
+#define __AFL_LOOP(x) ({ static int macro_i = 1; int macro_r = macro_i; macro_i = 0; macro_r; })
+#endif
+
+
+char __start___debug[1] = {0};
+extern char __stop___debug[1] __attribute__((alias("__start___debug")));
+
 void generate_client_mac(uint8_t *mac_buffer)
 {
     for (int i = 0; i < 6; i++)
@@ -72,6 +80,11 @@ void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, si
     int expected_reply = 0; // 0 - ждем DHCP, 1 - ждем RA
     for (int i = 0; i < count_pkg;)
     {
+        clock_gettime(CLOCK_MONOTONIC, &now);
+
+        if (now.tv_sec - start.tv_sec > 5)
+            break;
+
         temp_pkg = &packages[i];
         char *pkg;
 
@@ -89,6 +102,7 @@ void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, si
             {
                 uint8_t *opts = packet->data.options;
                 int opt_idx = 0;
+                uint8_t msg_type = 0;
 
                 while (opt_idx < DHCP_OPTIONS_BUFSIZE)
                 {
@@ -103,6 +117,11 @@ void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, si
 
                     uint8_t opt_len = opts[opt_idx + 1];
 
+                    if (opt_type == 53 && opt_len == 1)
+                    {
+                        msg_type = opts[opt_idx + 2];
+                    }
+
                     // Заменяем Опцию 54 (Server Identifier)
                     if (opt_type == 54 && opt_len == 4)
                     {
@@ -116,6 +135,15 @@ void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, si
                         printf("[*] Injected Offered IP into Option 50\n");
                     }
                     opt_idx += 2 + opt_len; // Прыгаем к следующей опции
+                }
+                if (msg_type == 7 || msg_type == 8)
+                {
+                    packet->data.ciaddr = offered_ip;
+
+                    packet->ip.saddr = offered_ip;
+                    packet->ip.daddr = server_ip;
+
+                    printf("[*] Patched ciaddr and IP header for RELEASE/INFORM\n");
                 }
             }
 
@@ -148,13 +176,13 @@ void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, si
                 {
                     debug("Failed to replace Client ID (Option not found in template or size error).");
                 }
-                struct ip_udp_dhcpv6_packet* payload = &temp_pkg->pkt.v6.payload.ip_udp_dhcp;
+                struct ip_udp_dhcpv6_packet *payload = &temp_pkg->pkt.v6.payload.ip_udp_dhcp;
                 memcpy(&payload->dhcpv6.transaction_id, transaction_id, 3);
 
                 uint8_t dhcp_message_type = payload->dhcpv6.message;
                 struct udphdr *udp = &payload->udp;
-                uint8_t *dhcp = (uint8_t *)&payload->dhcpv6;                
-                
+                uint8_t *dhcp = (uint8_t *)&payload->dhcpv6;
+
                 uint16_t payload_len = temp_pkg->len - sizeof(struct ether_header) - sizeof(struct ip6_hdr);
                 send_ipv6->ip6_plen = htons(payload_len); // Обновляем длину в IPv6
                 udp->len = htons(payload_len);
@@ -164,7 +192,7 @@ void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, si
                 udp->check = udp6_checksum(send_ipv6, udp, dhcp, dhcp_len);
 
                 debug("received %s", dhcpv6_msg_to_str(dhcp_message_type));
-                
+
                 pkg = (char *)&temp_pkg->pkt.v6;
                 expected_reply = 0;
                 debug("[IPv6] Sending DHCPv6, waiting for response...");
@@ -181,13 +209,13 @@ void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, si
             debug("Raw packet sent: %zd bytes", n);
 
         int is_recv = 0;
-
-        clock_gettime(CLOCK_MONOTONIC, &start);
+        struct timespec start_resend;
+        clock_gettime(CLOCK_MONOTONIC, &start_resend);
         while (!is_recv)
         {
             clock_gettime(CLOCK_MONOTONIC, &now);
 
-            if (now.tv_sec - start.tv_sec > 2)
+            if (now.tv_sec - start_resend.tv_sec > 1)
                 break;
 
             char buf[2048];
@@ -334,7 +362,6 @@ int main(int argc, char *argv[])
     if (pid == 0)
     {
         printf("Binary connmand start!\n");
-        setenv("LLVM_PROFILE_FILE", "cov_data/connmand_%p.profraw", 1);
         setenv("ASAN_OPTIONS", "handle_segv=1:allow_user_segv_handler=0:abort_on_error=1:detect_leaks=0", 1);
         setenv("AFL_NO_FORKSRV", "1", 1);
 
@@ -344,7 +371,7 @@ int main(int argc, char *argv[])
             "-n", //--nodaemon
             "-r",
             "-c", "/etc/connman/main.conf",
-            "-d", "gdhcp/dhcp.c,gdhcp/server.c,src/dhcp.c,src/dhcpv6.c",
+            "-d", "gdhcp/dhcp.c,gdhcp/server.c,src/dhcp.c",
             NULL};
         execv(bin, args);
         perror("execv failed");

@@ -1,5 +1,9 @@
 #include "utils.h"
 
+// Фикс для линкера при сборке через make clang1
+char __start___debug[1] = {0};
+extern char __stop___debug[1] __attribute__((alias("__start___debug")));
+
 /**
  * @brief Основной цикл обработки и пересылки пакетов.
  * * Слушает сокет на наличие запросов от connman, подменяет идентификаторы (XID/MAC)
@@ -236,16 +240,15 @@ int main(int argc, char *argv[])
     if (pid == 0)
     {
         printf("Binary connmand start!\n");
-        setenv("LLVM_PROFILE_FILE", "cov_data/connmand_%p.profraw", 1);
         setenv("ASAN_OPTIONS", "handle_segv=1:allow_user_segv_handler=0:abort_on_error=1:detect_leaks=0", 1);
         setenv("AFL_NO_FORKSRV", "1", 1);
 
-        char *bin = "/home/bobro/Desktop/diplom/src/connman-1.32/src/connmand";
+        char *bin = "/home/bobro/Desktop/diplom/src/connman-2.0/src/connmand";
         char *args[] = {
             bin,  // debug
             "-n", //--nodaemon
             "-c", "/etc/connman/main.conf",
-            "-d", "gdhcp/dhcp.c,gdhcp/client.c,src/dhcp.c,src/dhcpv6.c,src/network.c,src/inet.c",
+            "-d", "gdhcp/client.c,src/dhcpv6.c",
             NULL};
         execv(bin, args);
         perror("execv failed");
