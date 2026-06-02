@@ -49,7 +49,16 @@ void generate_duid(uint8_t *mac, uint8_t *duid_payload)
     // Копируем наши 6 байт сгенерированного LAA MAC-адреса
     memcpy(&duid_payload[4], mac, 6);
 }
-
+/**
+* @brief Осуществляет маршрутизацию и модификацию мутированных пакетов.
+* Функция отправляет пакеты IPv4 целевому демону, динамически заменяя опции
+* пересчитывает контрольные суммы и ожидает ответ.
+* @param sockfd Файловый дескриптор RAW-сокета.
+* @param sll Структура адреса канального уровня (sockaddr_ll).
+* @param packages Указатель на массив пакетов, извлеченных из PCAP.
+* @param count_pkg Количество пакетов в массиве.
+* @return void
+*/
 void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, size_t count_pkg)
 {
     struct sockaddr src_addr;
@@ -324,6 +333,14 @@ void handler_packages(int sockfd, struct sockaddr_ll sll, packet_t *packages, si
     }
 }
 
+/**
+* @brief Главная точка входа Wrapper-оболочки режим(тестирования DHCP-сервера).
+* Функция инициализирует среду, запускает демон connmand через fork/exec,
+* настраивает D-Bus соединение (Tethering) и управляет циклом фаззинга AFL++.
+* @param argc Количество аргументов командной строки.
+* @param argv Массив аргументов. Ожидается [1] - путь к файлу. pcap.
+* @return int 0 при успешном завершении, 1 при ошибке инициализации.
+*/
 int main(int argc, char *argv[])
 {
     if (argc < 2)
